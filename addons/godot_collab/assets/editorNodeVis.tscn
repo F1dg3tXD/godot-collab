@@ -79,17 +79,20 @@ autowrap_mode = 3
 
 [node name="AnimatedSprite3D" type="AnimatedSprite3D" parent="Cursor3D" unique_id=1461985635]
 unique_name_in_owner = true
+centered = false
 modulate = Color(1, 0, 0, 1)
 pixel_size = 0.05
 billboard = 1
 texture_filter = 0
 sprite_frames = ExtResource("2_tnv6x")
-animation = &"grab"
+animation = &"idle"
 
 [node name="Cursor2D" type="Node2D" parent="." unique_id=126999757]
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="Cursor2D" unique_id=911631107]
 unique_name_in_owner = true
 modulate = Color(1, 0, 0, 1)
+texture_filter = 1
 sprite_frames = ExtResource("2_tnv6x")
 animation = &"idle"
+centered = false
