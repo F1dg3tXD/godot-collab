@@ -6,3 +6,6 @@
 __pycache__/
 *.pyc
 
+# Aseprite / art source files (not part of the add-on runtime)
+/src/
+

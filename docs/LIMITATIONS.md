@@ -26,7 +26,8 @@ are listed explicitly so nothing here is mistaken for working functionality.
   relay host and relay client in one process: registration, HELLO routing, cursor
   relay, token rejection, host departure). It passes (see [`TESTING.md`](TESTING.md)).
 - The interactive editor behaviours (dock UI, top-toolbar buttons, remote cursor
-  drawing, `_forward_3d_gui_input` / `_forward_3d_draw_over_viewport`, scene
+  drawing, `_forward_3d_gui_input` / `_forward_canvas_gui_input` /
+  `_forward_canvas_draw_over_viewport`, scene
   editing, **Ctrl+S shared save**, project download, approval prompts) require
   **two interactive Godot editor instances** and have a documented manual
   procedure but are **not** asserted by an automated GUI test. In particular the
@@ -143,16 +144,25 @@ are listed explicitly so nothing here is mistaken for working functionality.
 
 ## Presence and cursors
 
-- A remote cursor is a configurable point on the remote user's camera ray. It is
-  **not** guaranteed to lie on the exact surface under the remote pointer
+- A remote 3D cursor is a configurable point on the remote user's camera ray. It
+  is **not** guaranteed to lie on the exact surface under the remote pointer
   (no guaranteed surface picking).
 - Cursors for users viewing a different scene or outside the local view may be
-  hidden.
+  hidden. A peer editing in the 2D view is represented by a 2D canvas cursor and
+  no 3D body; the reverse also holds.
 - The live 3D markers (`CollabMarkerManager` / `assets/editorNodeVis.tscn`) are
   only shown while a session is active and the editor has a 3D viewport. If the
-  editor is opened in a layout without a 3D viewport the markers are skipped
-  (the 2D overlay cursors still require the 3D viewport too). Markers follow the
-  same configurable ray depth as the 2D overlay and are not surface-picked.
+  editor is opened in a layout without a 3D viewport the markers are skipped.
+  Markers follow the same configurable ray depth as the 2D cursors and are not
+  surface-picked.
+- The cursor animation (`grab`, `idle_hover`, `grab_file_*`) is inferred
+  heuristically from the local input: which mouse buttons are held and whether
+  the editor reports an active drag-and-drop payload of a recognised kind.
+  Surface/object "hover" (as opposed to recent motion) is not detected, and a
+  drag started from an editor panel that does not expose its payload is shown as
+  a plain `grab`.
+- The 2D cursor is drawn on the overlay of the currently focused 2D view; if the
+  editor has no 2D view visible, remote 2D cursors are simply not painted.
 
 ## Saving
 

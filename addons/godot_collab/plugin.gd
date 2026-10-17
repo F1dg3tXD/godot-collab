@@ -88,6 +88,7 @@ func _enter_tree() -> void:
 	_presence = CollabPresenceService.new()
 	_presence.setup(_coordinator, _settings, _logs)
 	_presence.set_editor_interface_provider(Callable(self, "get_editor_interface"))
+	_presence.set_drag_data_provider(Callable(self, "_drag_data"))
 	add_child(_presence)
 
 	_markers = CollabMarkerManager.new()
@@ -199,6 +200,7 @@ func _process(delta: float) -> void:
 	if _coordinator.session_manager.is_active():
 		update_overlays()
 		_markers.poll()
+		_presence.tick_local()
 	# Keep the dock's participant list and connectivity reasonably fresh.
 	if _coordinator.session_manager.is_active() and _times % 15 == 0:
 		_dock.set_participants(_coordinator.registry.all())
@@ -787,6 +789,34 @@ func _editor_viewport_3d() -> SubViewport:
 	return _editor.get_editor_viewport_3d()
 
 
+func _editor_viewport_2d() -> SubViewport:
+	if _editor == null:
+		return null
+	return _editor.get_editor_viewport_2d() as SubViewport
+
+
+## Returns the active editor drag-and-drop payload, if any. The editor keeps the
+## drag data on the viewport that is currently receiving the drag, so we probe
+## the root viewport and both editor viewports.
+func _drag_data() -> Variant:
+	var root_viewport: Viewport = get_viewport()
+	if root_viewport != null:
+		var data: Variant = root_viewport.gui_get_drag_data()
+		if _is_drag(data):
+			return data
+	for viewport in [_editor_viewport_3d(), _editor_viewport_2d()]:
+		if viewport == null:
+			continue
+		var viewport_data: Variant = (viewport as Viewport).gui_get_drag_data()
+		if _is_drag(viewport_data):
+			return viewport_data
+	return null
+
+
+func _is_drag(data: Variant) -> bool:
+	return typeof(data) == TYPE_DICTIONARY and not (data as Dictionary).is_empty()
+
+
 func _save_scene() -> int:
 	if _editor == null:
 		return FAILED
@@ -970,15 +1000,43 @@ func _forward_3d_gui_input(viewport_camera: Camera3D, event: InputEvent) -> int:
 		return EditorPlugin.AFTER_GUI_INPUT_PASS
 	var motion: InputEventMouseMotion = event as InputEventMouseMotion
 	if motion == null:
+		var button: InputEventMouseButton = event as InputEventMouseButton
+		if button != null:
+			_presence.note_local_button(button.button_mask)
 		return EditorPlugin.AFTER_GUI_INPUT_PASS
 	var viewport_3d: SubViewport = _editor_viewport_3d()
 	if viewport_3d == null:
 		return EditorPlugin.AFTER_GUI_INPUT_PASS
-	_presence.sample_local_cursor(viewport_camera, motion.position, Vector2(viewport_3d.size), _attached_scene_id)
+	_presence.sample_local_cursor(viewport_camera, motion.position, Vector2(viewport_3d.size), _attached_scene_id, motion.button_mask)
 	return EditorPlugin.AFTER_GUI_INPUT_PASS
 
 
-## Paints remote cursors over the 3D viewport.
-func _forward_3d_draw_over_viewport(viewport_control: Control) -> void:
+## Observes mouse motion over the 2D editor view to derive the local 2D cursor.
+## Always returns false so normal editor interaction is untouched.
+func _forward_canvas_gui_input(event: InputEvent) -> bool:
+	if _presence == null or _coordinator == null:
+		return false
+	if not _coordinator.session_manager.is_active():
+		return false
+	var motion: InputEventMouseMotion = event as InputEventMouseMotion
+	if motion == null:
+		var button: InputEventMouseButton = event as InputEventMouseButton
+		if button != null:
+			_presence.note_local_button(button.button_mask)
+		return false
+	var viewport_2d: SubViewport = _editor_viewport_2d()
+	if viewport_2d == null:
+		return false
+	var canvas_pos: Vector2 = viewport_2d.get_canvas_transform().affine_inverse() * motion.position
+	var normalized: Vector2 = Vector2(
+		clampf(motion.position.x / maxf(1.0, float(viewport_2d.size.x)), 0.0, 1.0),
+		clampf(motion.position.y / maxf(1.0, float(viewport_2d.size.y)), 0.0, 1.0)
+	)
+	_presence.sample_local_cursor_2d(canvas_pos, normalized, _attached_scene_id, motion.button_mask)
+	return false
+
+
+## Paints remote 2D cursors over the 2D editor viewport.
+func _forward_canvas_draw_over_viewport(viewport_control: Control) -> void:
 	if _presence != null:
-		_presence.draw_overlay(viewport_control)
+		_presence.draw_overlay_2d(viewport_control)

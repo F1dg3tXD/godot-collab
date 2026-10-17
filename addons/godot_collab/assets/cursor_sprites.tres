@@ -1,0 +1,99 @@
+[gd_resource type="SpriteFrames" format=3 uid="uid://b2n41ve8frgoh"]
+
+[ext_resource type="Texture2D" uid="uid://b2826grb0l5e1" path="res://addons/godot_collab/assets/images/cursors.png" id="1_f0kxv"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_1ypgu"]
+atlas = ExtResource("1_f0kxv")
+region = Rect2(64, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_nnqi7"]
+atlas = ExtResource("1_f0kxv")
+region = Rect2(160, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_cf8jv"]
+atlas = ExtResource("1_f0kxv")
+region = Rect2(192, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_16an2"]
+atlas = ExtResource("1_f0kxv")
+region = Rect2(96, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_a5cu6"]
+atlas = ExtResource("1_f0kxv")
+region = Rect2(128, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_a6jl5"]
+atlas = ExtResource("1_f0kxv")
+region = Rect2(224, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_bfgqr"]
+atlas = ExtResource("1_f0kxv")
+region = Rect2(256, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_vpuk0"]
+atlas = ExtResource("1_f0kxv")
+region = Rect2(0, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_7lnpm"]
+atlas = ExtResource("1_f0kxv")
+region = Rect2(32, 0, 32, 32)
+
+[resource]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_1ypgu")
+}],
+"loop": 1,
+"name": &"grab",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_nnqi7")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_cf8jv")
+}],
+"loop": 1,
+"name": &"grab_file_script",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_16an2")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_a5cu6")
+}],
+"loop": 1,
+"name": &"grab_file_material",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_a6jl5")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_bfgqr")
+}],
+"loop": 1,
+"name": &"grab_file_object",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_vpuk0")
+}],
+"loop": 1,
+"name": &"idle",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_7lnpm")
+}],
+"loop": 1,
+"name": &"idle_hover",
+"speed": 5.0
+}]

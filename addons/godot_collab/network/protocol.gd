@@ -170,8 +170,17 @@ static func _validate_payload(type: MessageType, payload: Dictionary) -> String:
 			if arr.size() > 256:
 				return "PARTICIPANT list too large"
 		MessageType.CURSOR_UPDATE:
-			if not _has_keys(payload, ["camera_transform", "ray_origin", "ray_direction"]):
-				return "CURSOR_UPDATE missing fields"
+			if not payload.has("view"):
+				return "CURSOR_UPDATE missing view"
+			var view: String = str(payload["view"])
+			if view == CollabConstants.CURSOR_VIEW_2D:
+				if not payload.has("canvas_pos") or typeof(payload["canvas_pos"]) != TYPE_VECTOR2:
+					return "CURSOR_UPDATE missing 2d position"
+			elif view == CollabConstants.CURSOR_VIEW_3D:
+				if not _has_keys(payload, ["camera_transform", "ray_origin", "ray_direction"]):
+					return "CURSOR_UPDATE missing 3d fields"
+			else:
+				return "CURSOR_UPDATE unknown view"
 		MessageType.OPS:
 			if not payload.has("operations") or typeof(payload["operations"]) != TYPE_ARRAY:
 				return "OPS missing operations"

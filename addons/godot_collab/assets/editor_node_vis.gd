@@ -30,7 +30,13 @@ const VIEWPORT_V_PADDING: float = 12.0
 @onready var _name_label: Label = %"$user"
 @onready var _username_ui: SubViewport = $usernameUI
 @onready var _name_sprite: Sprite3D = $UserNameDisplay
+@onready var _cursor_3d: Node3D = $Cursor3D
 
+## Cursors for the actual mouse position
+# 3D
+@onready var animated_sprite_3d: AnimatedSprite3D = %AnimatedSprite3D
+# 2D
+@onready var animated_sprite_2d: AnimatedSprite2D = %AnimatedSprite2D
 
 func _ready() -> void:
 	# The label must keep rendering even when nothing else changes.
@@ -46,8 +52,78 @@ func _ready() -> void:
 		_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		_name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Anchor the cursor sprite at its top-left (the pointer tip) rather than its
+	# center so the sprite tip tracks the remote mouse point.
+	if animated_sprite_3d != null:
+		animated_sprite_3d.centered = false
+		animated_sprite_3d.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	if animated_sprite_2d != null:
+		animated_sprite_2d.centered = false
+		animated_sprite_2d.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_apply_username()
 	_apply_color()
+
+
+## Places the marker body at a remote editor camera (position + orientation), so
+## it reads as that peer's avatar. The cursor sprite is positioned separately
+## with [method set_cursor_world_position].
+func place_at_camera(camera_transform: Transform3D) -> void:
+	set_world_position(camera_transform.origin)
+	set_from_camera(camera_transform)
+
+
+## Places the cursor sprite at a world-space point along the remote mouse ray.
+func set_cursor_world_position(world_position: Vector3) -> void:
+	var cursor: Node3D = _resolve_cursor_3d()
+	if cursor == null:
+		return
+	if cursor.is_inside_tree():
+		cursor.global_position = world_position
+	else:
+		cursor.position = world_position
+
+
+## Plays the named cursor animation. Unknown names are ignored (the last known
+## pose is kept) so a peer can never request an animation that does not exist.
+func set_cursor_animation(anim: String) -> void:
+	var sprite: AnimatedSprite3D = _resolve_sprite_3d()
+	if sprite == null or sprite.sprite_frames == null:
+		return
+	var key: StringName = StringName(anim)
+	if not sprite.sprite_frames.has_animation(key):
+		return
+	if sprite.animation != key:
+		sprite.animation = key
+	if not sprite.is_playing():
+		sprite.play()
+
+
+## Current world position of the cursor sprite (used by tests).
+func cursor_global_position() -> Vector3:
+	var cursor: Node3D = _resolve_cursor_3d()
+	if cursor == null:
+		return global_position
+	return cursor.global_position if cursor.is_inside_tree() else cursor.position
+
+
+## Current cursor animation name (empty when unavailable).
+func cursor_animation() -> StringName:
+	var sprite: AnimatedSprite3D = _resolve_sprite_3d()
+	return sprite.animation if sprite != null else &""
+
+
+# Resolve the cursor nodes directly so the placement/animation API works even
+# before _ready has run (the children exist as soon as the scene is instantiated).
+func _resolve_cursor_3d() -> Node3D:
+	if _cursor_3d != null:
+		return _cursor_3d
+	return get_node_or_null("Cursor3D") as Node3D
+
+
+func _resolve_sprite_3d() -> AnimatedSprite3D:
+	if animated_sprite_3d != null:
+		return animated_sprite_3d
+	return get_node_or_null("Cursor3D/AnimatedSprite3D") as AnimatedSprite3D
 
 
 ## Orients the marker so its +Z axis matches a remote editor camera's view
@@ -145,6 +221,13 @@ func _apply_color() -> void:
 			var settings: LabelSettings = current.duplicate() as LabelSettings
 			settings.font_color = marker_color
 			_name_label.label_settings = settings
+	# Cursor sprites use the participant colour at full opacity; the sphere keeps
+	# the (translucent) marker colour. Setting the same colour again is a no-op.
+	var tint: Color = Color(marker_color.r, marker_color.g, marker_color.b, 1.0)
+	if animated_sprite_3d != null and not animated_sprite_3d.modulate.is_equal_approx(tint):
+		animated_sprite_3d.modulate = tint
+	if animated_sprite_2d != null and not animated_sprite_2d.modulate.is_equal_approx(tint):
+		animated_sprite_2d.modulate = tint
 
 
 func _material_matches(mat: StandardMaterial3D, color: Color) -> bool:

@@ -5,8 +5,9 @@
 ## Markers are parented to the editor's 3D viewport (not the edited scene), so
 ## they share the edited scene's [World3D] while never being serialised into the
 ## scene, never appearing in the Scene dock and never marking the scene dirty.
-## Positions come from [CollabCursorState]'s interpolated world ray point, so the
-## markers move as smoothly as the 2D overlay cursors.
+## Each marker's body sits at the remote editor camera (so it acts as a live
+## avatar) while its cursor sprite rides the interpolated world ray point, so it
+## moves as smoothly as the 2D overlay cursors.
 class_name CollabMarkerManager
 extends Node
 
@@ -76,6 +77,8 @@ func poll() -> void:
 			continue
 		if not _cursor_state.has(peer_id) or _cursor_state.is_stale(peer_id, now):
 			continue
+		if _cursor_state.view(peer_id) != CollabConstants.CURSOR_VIEW_3D:
+			continue
 		var remote_scene: String = _cursor_state.scene_id(peer_id)
 		if not remote_scene.is_empty() and not _local_scene_id.is_empty() and remote_scene != _local_scene_id:
 			continue
@@ -83,11 +86,14 @@ func poll() -> void:
 		var marker: CollabUserMarker = _marker_for(container, peer_id)
 		if marker == null:
 			continue
-		marker.position = _cursor_state.world_position(peer_id, now)
-		marker.set_from_camera(_cursor_state.camera_transform(peer_id))
+		marker.place_at_camera(_cursor_state.camera_transform(peer_id))
+		# Orientation (look_at) resets the basis, so scale must be applied before
+		# positioning the cursor child in world space.
 		var wanted_scale: Vector3 = Vector3.ONE * _marker_scale
 		if not marker.scale.is_equal_approx(wanted_scale):
 			marker.scale = wanted_scale
+		marker.set_cursor_world_position(_cursor_state.world_position(peer_id, now))
+		marker.set_cursor_animation(_cursor_state.anim(peer_id))
 		var display: String = participant.display_name()
 		if marker.username != display:
 			marker.username = display

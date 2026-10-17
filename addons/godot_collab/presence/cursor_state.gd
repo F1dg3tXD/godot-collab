@@ -2,19 +2,25 @@
 ## Stores the latest cursor sample for every remote participant and produces
 ## interpolated world positions for drawing.
 ##
-## A "cursor" is represented as a world-space ray (origin + direction) taken
+## A 3D "cursor" is represented as a world-space ray (origin + direction) taken
 ## from the remote user's editor camera. We place a configurable marker at a
 ## fixed distance along that ray. This is deliberately *not* surface picking:
-## no claim is made that the marker sits on geometry.
+## no claim is made that the marker sits on geometry. A 2D "cursor" instead
+## carries a canvas-space position so it can be drawn on the 2D editor overlay
+## under the local pan/zoom. Every sample also carries the remote mouse
+## animation name (see [constant CollabConstants.CURSOR_ANIM_IDLE] and friends).
 class_name CollabCursorState
 extends RefCounted
 
 class Sample:
+	var view: String = CollabConstants.CURSOR_VIEW_3D
 	var camera_transform: Transform3D = Transform3D.IDENTITY
 	var ray_origin: Vector3 = Vector3.ZERO
 	var ray_direction: Vector3 = Vector3.FORWARD
 	var viewport_pos: Vector2 = Vector2(0.5, 0.5)
+	var canvas_pos: Vector2 = Vector2.ZERO
 	var scene_id: String = ""
+	var anim: String = CollabConstants.CURSOR_ANIM_IDLE
 	var recv_ms: int = 0
 	var prev_world: Vector3 = Vector3.ZERO
 	var target_world: Vector3 = Vector3.ZERO
@@ -29,7 +35,8 @@ func set_marker_depth(depth: float) -> void:
 	marker_depth = depth
 
 
-func update(peer_id: int, camera_transform: Transform3D, ray_origin: Vector3, ray_direction: Vector3, viewport_pos: Vector2, scene_id: String) -> void:
+## Records a 3D sample from a remote peer's camera ray.
+func update(peer_id: int, camera_transform: Transform3D, ray_origin: Vector3, ray_direction: Vector3, viewport_pos: Vector2, scene_id: String, anim: String = CollabConstants.CURSOR_ANIM_IDLE) -> void:
 	var sample: Sample = _samples.get(peer_id, null)
 	var now: int = Time.get_ticks_msec()
 	var world: Vector3 = ray_origin + ray_direction.normalized() * marker_depth
@@ -45,11 +52,28 @@ func update(peer_id: int, camera_transform: Transform3D, ray_origin: Vector3, ra
 		sample.prev_world = current_world(sample, now)
 		sample.target_world = world
 		sample.segment_start_ms = now
+	sample.view = CollabConstants.CURSOR_VIEW_3D
 	sample.camera_transform = camera_transform
 	sample.ray_origin = ray_origin
 	sample.ray_direction = ray_direction
 	sample.viewport_pos = viewport_pos
 	sample.scene_id = scene_id
+	sample.anim = anim
+	sample.recv_ms = now
+
+
+## Records a 2D sample from a remote peer's 2D editor view.
+func update_2d(peer_id: int, canvas_pos: Vector2, viewport_pos: Vector2, scene_id: String, anim: String = CollabConstants.CURSOR_ANIM_IDLE) -> void:
+	var sample: Sample = _samples.get(peer_id, null)
+	var now: int = Time.get_ticks_msec()
+	if sample == null:
+		sample = Sample.new()
+		_samples[peer_id] = sample
+	sample.view = CollabConstants.CURSOR_VIEW_2D
+	sample.canvas_pos = canvas_pos
+	sample.viewport_pos = viewport_pos
+	sample.scene_id = scene_id
+	sample.anim = anim
 	sample.recv_ms = now
 
 
@@ -79,6 +103,18 @@ func is_stale(peer_id: int, now: int) -> bool:
 	return (now - sample.recv_ms) > int(CollabConstants.CURSOR_STALE_SECONDS * 1000.0)
 
 
+## Whether the peer's latest sample is a 3D or 2D cursor
+## ([constant CollabConstants.CURSOR_VIEW_3D] / `CURSOR_VIEW_2D`).
+func view(peer_id: int) -> String:
+	var sample: Sample = _samples.get(peer_id, null)
+	return sample.view if sample != null else CollabConstants.CURSOR_VIEW_3D
+
+
+func anim(peer_id: int) -> String:
+	var sample: Sample = _samples.get(peer_id, null)
+	return sample.anim if sample != null else CollabConstants.CURSOR_ANIM_IDLE
+
+
 ## Current interpolated world position for a peer, or [constant Vector3.ZERO].
 func world_position(peer_id: int, now: int = -1) -> Vector3:
 	var sample: Sample = _samples.get(peer_id, null)
@@ -95,6 +131,11 @@ func camera_transform(peer_id: int) -> Transform3D:
 func viewport_pos(peer_id: int) -> Vector2:
 	var sample: Sample = _samples.get(peer_id, null)
 	return sample.viewport_pos if sample != null else Vector2(0.5, 0.5)
+
+
+func canvas_pos(peer_id: int) -> Vector2:
+	var sample: Sample = _samples.get(peer_id, null)
+	return sample.canvas_pos if sample != null else Vector2.ZERO
 
 
 func scene_id(peer_id: int) -> String:

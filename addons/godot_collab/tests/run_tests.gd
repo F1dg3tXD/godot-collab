@@ -271,6 +271,7 @@ func _init() -> void:
 	_test_workspace_rename_delete_loopback()
 	_test_rejoin_desync()
 	_test_multi_scene_isolation()
+	_test_cursor_state()
 	_test_marker_manager()
 	# The marker test needs a live frame so the node's ready/deferred calls run.
 	_run_marker_test_then_finish()
@@ -500,10 +501,21 @@ func _test_protocol() -> void:
 	var truncated: PackedByteArray = bytes.slice(0, CollabConstants.HEADER_SIZE - 2)
 	_check(not bool(CollabProtocol.decode(truncated).get("ok", true)), "truncated packet rejected")
 
-	# CURSOR_UPDATE requires transform fields.
+	# CURSOR_UPDATE requires an explicit view and the fields for that view.
 	var bad_cursor: PackedByteArray = CollabProtocol.encode(CollabProtocol.MessageType.CURSOR_UPDATE, {"time_ms": 1})
 	var bad_decoded: Dictionary = CollabProtocol.decode(bad_cursor)
 	_check(not bool(bad_decoded.get("ok", true)), "cursor payload validated")
+	var bad_view: PackedByteArray = CollabProtocol.encode(CollabProtocol.MessageType.CURSOR_UPDATE, {"view": "nope"})
+	_check(not bool(CollabProtocol.decode(bad_view).get("ok", true)), "unknown cursor view rejected")
+	var bad_2d: PackedByteArray = CollabProtocol.encode(CollabProtocol.MessageType.CURSOR_UPDATE, {"view": CollabConstants.CURSOR_VIEW_2D, "viewport_pos": Vector2(0.5, 0.5)})
+	_check(not bool(CollabProtocol.decode(bad_2d).get("ok", true)), "2D cursor requires a canvas position")
+	var good_2d: PackedByteArray = CollabProtocol.encode(CollabProtocol.MessageType.CURSOR_UPDATE, {
+		"view": CollabConstants.CURSOR_VIEW_2D,
+		"canvas_pos": Vector2(12.0, 34.0),
+		"viewport_pos": Vector2(0.5, 0.5),
+		"anim": CollabConstants.CURSOR_ANIM_GRAB,
+	})
+	_check(bool(CollabProtocol.decode(good_2d).get("ok", false)), "2D cursor payload validated")
 
 	# Workspace authoring messages are accepted with a valid shape...
 	var workspace: PackedByteArray = CollabProtocol.encode(CollabProtocol.MessageType.WORKSPACE_REQUEST, {
@@ -655,6 +667,28 @@ func _test_rate_limiter() -> void:
 	_check(allowed == 3, "burst limited to capacity (got %d)" % allowed)
 
 
+func _test_cursor_state() -> void:
+	print("[cursor state]")
+	var state := CollabCursorState.new()
+	_check(not state.has(5), "no sample for an unknown peer")
+	state.update(5, Transform3D(Basis(), Vector3(1.0, 2.0, 3.0)), Vector3.ZERO, Vector3(0.0, 0.0, -1.0), Vector2(0.5, 0.5), "res://a.tscn", CollabConstants.CURSOR_ANIM_HOVER)
+	_check(state.view(5) == CollabConstants.CURSOR_VIEW_3D, "3D sample is marked as 3D")
+	_check(state.anim(5) == CollabConstants.CURSOR_ANIM_HOVER, "3D sample keeps its animation")
+	_check(state.world_position(5).is_equal_approx(Vector3(0.0, 0.0, -12.0)), "world position is along the ray at the marker depth")
+	state.update_2d(5, Vector2(40.0, 50.0), Vector2(0.25, 0.75), "res://a.tscn", CollabConstants.CURSOR_ANIM_FILE_MATERIAL)
+	_check(state.view(5) == CollabConstants.CURSOR_VIEW_2D, "2D sample flips the view mode")
+	_check(state.canvas_pos(5).is_equal_approx(Vector2(40.0, 50.0)), "2D sample stores the canvas position")
+	_check(state.anim(5) == CollabConstants.CURSOR_ANIM_FILE_MATERIAL, "2D sample keeps its animation")
+	state.set_marker_depth(20.0)
+	state.update(6, Transform3D.IDENTITY, Vector3.ZERO, Vector3(0.0, 0.0, -1.0), Vector2(0.5, 0.5), "res://a.tscn")
+	_check(state.world_position(6).is_equal_approx(Vector3(0.0, 0.0, -20.0)), "marker depth is configurable")
+	_check(not state.is_stale(6, Time.get_ticks_msec()), "a fresh sample is not stale")
+	state.remove(6)
+	_check(not state.has(6), "remove drops the sample")
+	state.clear()
+	_check(not state.has(5), "clear drops all samples")
+
+
 func _test_marker_manager() -> void:
 	print("[marker manager]")
 	var logs := CollabLog.new()
@@ -680,14 +714,17 @@ func _test_marker_manager() -> void:
 	markers.set_local_scene_id("res://scene.tscn")
 
 	var camera := Transform3D(Basis(), Vector3(0.0, 5.0, 10.0))
-	state.update(2, camera, Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, -1.0), Vector2(0.5, 0.5), "res://scene.tscn")
+	state.update(2, camera, Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, -1.0), Vector2(0.5, 0.5), "res://scene.tscn", CollabConstants.CURSOR_ANIM_GRAB)
 	markers.poll()
 	_check(markers.has_marker(2), "a marker is created for a remote cursor")
 	_check(markers.marker_count() == 1, "exactly one marker per remote peer")
 	var created: Node = viewport.get_node_or_null("CollabUserMarkers/CollabPeer_2")
 	_check(created != null, "marker is parented into the editor viewport container")
-	if created is Node3D:
-		_check((created as Node3D).position.is_equal_approx(Vector3(0.0, 0.0, -12.0)), "marker sits at the configured depth along the remote ray")
+	if created is CollabUserMarker:
+		var marker: CollabUserMarker = created as CollabUserMarker
+		_check(marker.position.is_equal_approx(camera.origin), "marker body sits at the remote camera")
+		_check(marker.cursor_global_position().is_equal_approx(Vector3(0.0, 0.0, -12.0)), "cursor sprite sits at the configured depth along the remote ray")
+		_check(marker.cursor_animation() == &"grab", "remote animation is applied to the cursor sprite")
 
 	state.remove(2)
 	markers.poll()
@@ -696,6 +733,10 @@ func _test_marker_manager() -> void:
 	state.update(2, camera, Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, -1.0), Vector2(0.5, 0.5), "res://other.tscn")
 	markers.poll()
 	_check(not markers.has_marker(2), "marker hidden when the peer is editing another scene")
+
+	state.update_2d(2, Vector2(5.0, 6.0), Vector2(0.5, 0.5), "res://scene.tscn")
+	markers.poll()
+	_check(not markers.has_marker(2), "no 3D marker while the peer is in the 2D view")
 
 	coordinator.stop("cleanup")
 	markers.free()
@@ -721,6 +762,15 @@ func _test_marker_visuals() -> void:
 	var sphere: CSGSphere3D = marker.get_node_or_null("CSGSphere3D") as CSGSphere3D
 	_check(label != null, "marker exposes its username label")
 	_check(sphere != null, "marker exposes its sphere")
+	_check(marker.animated_sprite_3d != null, "marker exposes its 3D cursor sprite")
+	_check(marker.animated_sprite_2d != null, "marker exposes its 2D cursor sprite")
+	if marker.animated_sprite_3d != null:
+		_check(marker.animated_sprite_3d.sprite_frames != null, "cursor sprite has the shared SpriteFrames")
+	# Unknown animation names are ignored rather than crashing.
+	marker.set_cursor_animation("does_not_exist")
+	_check(marker.animated_sprite_3d != null and marker.animated_sprite_3d.animation != &"does_not_exist", "unknown animation name is ignored")
+	marker.set_cursor_animation(CollabConstants.CURSOR_ANIM_HOVER)
+	_check(marker.cursor_animation() == &"idle_hover", "known animation name is applied")
 
 	# Applying the default colour must be a no-op so loading the scene in the
 	# editor does not duplicate resources / mark it modified.
@@ -742,6 +792,8 @@ func _test_marker_visuals() -> void:
 	if sphere != null and sphere.material_override is StandardMaterial3D:
 		var mat: StandardMaterial3D = sphere.material_override as StandardMaterial3D
 		_check(mat.albedo_color.is_equal_approx(blue) and mat.emission.is_equal_approx(blue), "marker colour is applied to the material")
+	if marker.animated_sprite_3d != null:
+		_check(marker.animated_sprite_3d.modulate.is_equal_approx(Color(blue.r, blue.g, blue.b, 1.0)), "marker colour tints the cursor sprite")
 
 	root.remove_child(marker)
 	marker.free()
@@ -796,11 +848,13 @@ func _test_loopback_session() -> void:
 
 	if bool(state["client_joined"]):
 		client.send_cursor({
+			"view": CollabConstants.CURSOR_VIEW_3D,
 			"camera_transform": Transform3D.IDENTITY,
 			"ray_origin": Vector3.ZERO,
 			"ray_direction": Vector3.FORWARD,
 			"viewport_pos": Vector2(0.5, 0.5),
 			"scene_id": "",
+			"anim": CollabConstants.CURSOR_ANIM_IDLE,
 			"time_ms": Time.get_ticks_msec(),
 		})
 		var cursor_deadline: int = Time.get_ticks_msec() + 3000
@@ -886,11 +940,13 @@ func _test_relay_session() -> void:
 
 	if bool(state["client_joined"]):
 		client.send_cursor({
+			"view": CollabConstants.CURSOR_VIEW_3D,
 			"camera_transform": Transform3D.IDENTITY,
 			"ray_origin": Vector3.ZERO,
 			"ray_direction": Vector3.FORWARD,
 			"viewport_pos": Vector2(0.5, 0.5),
 			"scene_id": "",
+			"anim": CollabConstants.CURSOR_ANIM_IDLE,
 			"time_ms": Time.get_ticks_msec(),
 		})
 		var cursor_deadline: int = Time.get_ticks_msec() + 3000

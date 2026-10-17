@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://bisavoa4hvn68"]
 
 [ext_resource type="Script" uid="uid://bi7b3g82wlrps" path="res://addons/godot_collab/assets/editor_node_vis.gd" id="1_tnv6x"]
+[ext_resource type="SpriteFrames" uid="uid://b2n41ve8frgoh" path="res://addons/godot_collab/assets/cursor_sprites.tres" id="2_tnv6x"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_qjxf3"]
 transparency = 1
@@ -19,14 +20,6 @@ font_size = 24
 font_color = Color(1, 0, 0, 0.6)
 outline_size = 10
 outline_color = Color(0, 0, 0, 1)
-
-[sub_resource type="SpriteFrames" id="SpriteFrames_qjxf3"]
-animations = [{
-"frames": [],
-"loop": 1,
-"name": &"idle",
-"speed": 5.0
-}]
 
 [node name="EditorNodeVis" type="Node3D" unique_id=1689922859]
 script = ExtResource("1_tnv6x")
@@ -82,9 +75,21 @@ horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 3
 
-[node name="Cursor" type="Node3D" parent="." unique_id=1606338959]
-visible = false
+[node name="Cursor3D" type="Node3D" parent="." unique_id=1606338959]
 
-[node name="AnimatedSprite3D" type="AnimatedSprite3D" parent="Cursor" unique_id=1461985635]
-sprite_frames = SubResource("SpriteFrames_qjxf3")
+[node name="AnimatedSprite3D" type="AnimatedSprite3D" parent="Cursor3D" unique_id=1461985635]
+unique_name_in_owner = true
+modulate = Color(1, 0, 0, 1)
+pixel_size = 0.05
+billboard = 1
+texture_filter = 0
+sprite_frames = ExtResource("2_tnv6x")
+animation = &"grab"
+
+[node name="Cursor2D" type="Node2D" parent="." unique_id=126999757]
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="Cursor2D" unique_id=911631107]
+unique_name_in_owner = true
+modulate = Color(1, 0, 0, 1)
+sprite_frames = ExtResource("2_tnv6x")
 animation = &"idle"

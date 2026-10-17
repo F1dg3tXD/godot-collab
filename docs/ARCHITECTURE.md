@@ -36,9 +36,9 @@ someone maintaining the add-on, not at end users.
 | `CollabSessionManager` | `network/session_manager.gd` | Owns the `ENetMultiplayerPeer`, poll loop, reliable/unreliable send, peer tracking. Also speaks the relay (host *and* client connect outbound; application ids abstract away transport ids). |
 | `CollabSessionCoordinator` | `session/session_coordinator.gd` | Handshake, approval, participant registry, cursor relay, routing of scene/save/transfer messages. |
 | `CollabParticipant` / `CollabParticipantRegistry` | `network/participant.gd`, `network/participant_registry.gd` | Participant records and authoritative list. |
-| `CollabPresenceService` | `presence/presence_service.gd` | Samples the local camera ray, sends/relays cursor updates, stores remote cursor state, draws overlays. |
-| `CollabCursorState` | `presence/cursor_state.gd` | Per-participant cursor state + interpolation + staleness. |
-| `CollabMarkerManager` | `presence/marker_manager.gd` | Spawns/updates/removes a live 3D `editorNodeVis` marker per remote participant in the editor viewport. |
+| `CollabPresenceService` | `presence/presence_service.gd` | Samples the local 3D ray / 2D canvas position, sends/relays cursor updates with an animation state, stores remote cursor state, draws the 2D cursors. |
+| `CollabCursorState` | `presence/cursor_state.gd` | Per-participant 3D/2D cursor state + interpolation + staleness + animation. |
+| `CollabMarkerManager` | `presence/marker_manager.gd` | Spawns/updates/removes a live 3D `editorNodeVis` marker (camera avatar + animated cursor) per remote participant in the editor viewport. |
 | `CollabSceneOperations` | `collaboration/scene_operations.gd` | Builds and validates structured scene operations. |
 | `CollabNodeIdMap` | `collaboration/node_id_map.gd` | Stable session-level node IDs ↔ local `Node` mapping. |
 | `CollabDiffWatcher` | `collaboration/diff_watcher.gd` | Per-context debounced snapshot/diff watcher for supported editor changes. |
@@ -70,8 +70,8 @@ plugin.gd ──────────────► CollabSessionCoordinator
    │   └── CollabPresenceService ◄┘  │                          │
    │            │ cursor updates     │                          ▼
    │            ▼                    └────── CollabProtocol (frame/decode/validate)
-   │     _forward_3d_gui_input
-   │     _forward_3d_draw_over_viewport
+   │     _forward_3d_gui_input / _forward_canvas_gui_input
+   │     _forward_canvas_draw_over_viewport
     └── CollabSceneSyncService / CollabSaveService / CollabTransferManager / CollabWorkspaceService
 ```
 
@@ -387,35 +387,50 @@ imported or executed by the add-on.
 
 ## Presence and remote cursors
 
-- Local cursor sampling happens in `EditorPlugin._forward_3d_gui_input`. The
-  callback observes `InputEventMouseMotion`, obtains the editor 3D viewport via
+- Local cursor sampling happens in `EditorPlugin._forward_3d_gui_input` (3D view)
+  and `EditorPlugin._forward_canvas_gui_input` (2D view). The 3D callback
+  observes `InputEventMouseMotion`, obtains the editor 3D viewport via
   `EditorInterface.get_editor_viewport_3d()` and the provided camera, and builds
-  a world-space ray plus a normalized viewport position. It **always** returns
-  `AFTER_GUI_INPUT_PASS`, so normal editor interaction is never consumed.
-- The payload synchronizes the sender's camera transform, ray origin/direction,
-  normalized viewport position, username, timestamp, and scene id.
-- `CURSOR_UPDATE` is sent at `CURSOR_SEND_HZ` (unreliable-ordered), relayed by
-  the host to other participants, interpolated over `CURSOR_INTERP_SECONDS`, and
-  discarded when older than `CURSOR_STALE_SECONDS`.
-- Drawing happens in `EditorPlugin._forward_3d_draw_over_viewport`, which calls
-  `CollabPresenceService.draw_overlay`. Each participant gets a stable distinct
-  colour; the local user is distinguishable. Markers are hidden when behind or
-  outside the local view. A marker is a configurable point on the remote camera
-  ray (depth/size/labels configurable) — it is **not** claimed to sit exactly on
-  the surface under the remote pointer.
-- Disconnect clears the participant's overlay immediately.
-- `CollabMarkerManager` additionally renders a **live 3D marker** for every
-  remote participant: it instances `assets/editorNodeVis.tscn`
-  (`CollabUserMarker`) into a container parented to
-  `EditorInterface.get_editor_viewport_3d()`. The marker shares the edited
-  scene's `World3D` but is not part of the scene, so it is never serialised,
-  never shows in the Scene dock and never marks the scene dirty. Its position is
-  the interpolated point on the remote camera ray from `CollabCursorState`, and
-  its orientation follows the remote camera (`set_from_camera`). Markers are
-  created lazily, hidden for peers that are stale or in another scene, and
-  removed on disconnect / session stop. Visibility, label display and scale are
-  controlled by editor settings (`cursors/show_3d_markers`, `cursors/show_labels`,
-  `cursors/marker_3d_scale`; depth via `cursors/marker_depth`).
+  a world-space ray plus a normalized viewport position. The 2D callback converts
+  the mouse position through the 2D viewport's canvas transform
+  (`EditorInterface.get_editor_viewport_2d()`) into a canvas-space position. Mouse
+  button press/release events only refresh the held-button state so the cursor
+  animation updates without motion. Both callbacks **always** return
+  pass-through, so normal editor interaction is never consumed.
+- A `CURSOR_UPDATE` payload carries an explicit `view` (`3d`/`2d`), the sender's
+  `scene_id`, an `anim` state and a timestamp. A 3D update also carries the
+  camera transform, ray origin/direction and normalized viewport position; a 2D
+  update carries the canvas position instead.
+- `CURSOR_UPDATE` is sent at `CURSOR_SEND_HZ` (unreliable-ordered) while a session
+  is active, relayed by the host to other participants, interpolated over
+  `CURSOR_INTERP_SECONDS`, and discarded when older than `CURSOR_STALE_SECONDS`.
+- The `anim` state is derived from the local input: a FileSystem drag maps a
+  script/material/object to `grab_file_script`/`grab_file_material`/
+  `grab_file_object`, a held mouse button maps to `grab`, recent motion maps to
+  `idle_hover`, otherwise `idle`. Animations live in
+  `assets/cursor_sprites.tres` (shared by the 3D and 2D cursors).
+- 2D cursors are drawn in `EditorPlugin._forward_canvas_draw_over_viewport`, which
+  calls `CollabPresenceService.draw_overlay_2d`. The remote canvas position is
+  mapped through the local 2D viewport's canvas transform, so cursors line up
+  under the local pan/zoom. Each participant gets a stable distinct colour and an
+  optional username label. Cursors for peers in another scene are skipped.
+- Disconnect clears the participant's cursor immediately.
+- `CollabMarkerManager` renders a **live 3D marker** for every remote participant
+  editing in 3D: it instances `assets/editorNodeVis.tscn` (`CollabUserMarker`)
+  into a container parented to `EditorInterface.get_editor_viewport_3d()`. The
+  marker shares the edited scene's `World3D` but is not part of the scene, so it
+  is never serialised, never shows in the Scene dock and never marks the scene
+  dirty. The marker's body sits at the remote editor camera (a live avatar) and
+  its `AnimatedSprite3D` cursor rides the interpolated point on the remote camera
+  ray from `CollabCursorState`, playing the transmitted `anim`. Markers are
+  created lazily, hidden for peers that are stale, in another scene or in the 2D
+  view, and removed on disconnect / session stop. Visibility, label display and
+  scale are controlled by editor settings (`cursors/show_3d_markers`,
+  `cursors/show_labels`, `cursors/marker_3d_scale`; ray depth via
+  `cursors/marker_depth`, 2D cursor sprite size via `cursors/marker_size`). The
+  remote cursor ray point is a configurable point on
+  the ray — it is **not** claimed to sit exactly on the surface under the remote
+  pointer.
 
 ## Connectivity paths
 

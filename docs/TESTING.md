@@ -13,8 +13,9 @@ cd /path/to/godot-colab
 - Exit code `0` and a final `RESULT: PASS` mean all checks passed.
 - Exit code `1` with `RESULT: FAIL` means at least one check failed; each failure
   is printed individually.
-- The suite (currently **278 checks**) covers: protocol framing/validation (bad
-  magic, truncated packets, oversized payloads, non-dictionary payloads, and the
+- The suite (currently **301 checks**) covers: protocol framing/validation (bad
+  magic, truncated packets, oversized payloads, non-dictionary payloads, the
+  `CURSOR_UPDATE` `3d`/`2d` view shapes, and the
   workspace message types `WORKSPACE_REQUEST`/`WORKSPACE_RESULT`/`FILE_APPLY`/
   `FILE_REMOVE`/`SCENE_LIST`, including text **and** byte payloads), **relay
   framing** (`CollabRelayProtocol` register/registered/member-join/data round
@@ -38,10 +39,13 @@ cd /path/to/godot-colab
   (general properties accepted, `name`/`script`/`transform` reserved), source-file
   path predicates and baseline scanning (`addons/`, `.godot/`, `.git/` excluded;
   **binary assets included**; **open scenes protected**), node-id reconciliation
-  against a host snapshot, marker scene instantiation with username/colour
-  application and no-op default colour, a `CollabMarkerManager` check (marker
-  created for a remote cursor, parented into the viewport container, removed when
-  the cursor disappears or the peer is in another scene), an ENet loopback
+  against a host snapshot, `CollabCursorState` 3D/2D sample/view/animation
+  behaviour, marker scene instantiation with username/colour application and
+  no-op default colour, cursor-sprite animation selection (unknown names ignored)
+  and colour tinting, a `CollabMarkerManager` check (marker body created at the
+  remote camera for a 3D cursor with its cursor sprite at the ray depth, parented
+  into the viewport container, removed when the cursor disappears, the peer is in
+  another scene, or the peer is in the 2D view), an ENet loopback
   host/client handshake with cursor relay and host-disconnect detection, a
   two-scene loopback test where a host scene is snapshotted to a joining peer and
   host/peer create/remove/transform edits propagate both ways without id
@@ -130,10 +134,12 @@ instances, enable **Godot Collab** in each, and run through the checks:
    show "Waiting for host approval".)
 3. **Usernames + participant list.** Both docks list two participants with the
    correct names and host/client roles.
-4. **Remote cursors.** Move the mouse over Alice's 3D viewport: Bob sees a
-   coloured 2D cursor + username overlay **and** a live 3D `editorNodeVis`
-   marker for Alice (and vice-versa). Disconnect Alice: both the overlay and the
-   3D marker disappear immediately.
+4. **Remote cursors.** Move the mouse over Alice's 3D viewport: Bob sees a live
+   3D `editorNodeVis` avatar for Alice with her animated cursor sprite at the ray
+   point (and vice-versa). The sprite switches between idle/hover/grab states as
+   Alice moves, clicks and drags files from the FileSystem dock. Alice switching
+   to the 2D view instead shows a 2D canvas cursor on Bob's 2D view (no 3D body).
+   Disconnect Alice: the avatar and the 2D cursor disappear immediately.
 5. **Normal editor controls still work.** Orbit/pan/zoom and selection in the 3D
    viewport behave normally on both sides.
 6. **Incompatible project/scene warning.** Open a different scene in Bob (or
