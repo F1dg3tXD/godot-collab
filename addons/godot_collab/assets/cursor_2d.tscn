@@ -1,0 +1,15 @@
+[gd_scene format=3 uid="uid://bv6cl036ew5r"]
+
+[ext_resource type="SpriteFrames" uid="uid://b2n41ve8frgoh" path="res://addons/godot_collab/assets/cursor_sprites.tres" id="1_cu4ql"]
+[ext_resource type="Script" uid="uid://ck5ms5patck3k" path="res://addons/godot_collab/assets/cursor_2d.gd" id="1_mk70e"]
+
+[node name="Cursor2D" type="Node2D" unique_id=702463005]
+script = ExtResource("1_mk70e")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=681204970]
+unique_name_in_owner = true
+modulate = Color(1, 0, 0, 1)
+texture_filter = 1
+sprite_frames = ExtResource("1_cu4ql")
+animation = &"idle"
+centered = false
