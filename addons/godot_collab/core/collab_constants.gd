@@ -13,7 +13,9 @@ extends RefCounted
 ## and scene-focus broadcasts were added.
 ## v4: cursor updates carry an explicit view ("3d"/"2d") and animation state;
 ## 2D cursors send a canvas-space position instead of a camera ray.
-const PROTOCOL_VERSION: int = 4
+## v5: added join-time file manifest sync (FILE_SYNC_MANIFEST) for full filesystem
+## convergence and server-side project mirroring.
+const PROTOCOL_VERSION: int = 5
 
 ## Magic marker placed at the front of every packet so garbage/foreign traffic
 ## is discarded before it reaches the decoder. Declared as a static var because
@@ -95,6 +97,11 @@ const MAX_WORKSPACE_FILE_BYTES: int = 2 * 1024 * 1024 # 2 MiB
 
 ## Upper bound on the number of scenes advertised in a SCENE_LIST message.
 const MAX_SCENE_LIST: int = 2048
+
+## Reserved peer id used by the relay's server-side project mirror when it pulls
+## the host project through the normal transfer protocol. Chosen far above any
+## ENet-assigned peer id so it can never collide with a real participant.
+const MIRROR_PEER_ID: int = 1000
 
 ## File extensions a peer may create or overwrite through the workspace service.
 ## Covers source text plus the common binary/text assets a user may drag into the

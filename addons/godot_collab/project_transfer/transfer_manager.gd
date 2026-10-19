@@ -159,7 +159,9 @@ func _on_transfer_request(from_peer: int, payload: Dictionary) -> void:
 	var path: String = str(payload.get("path", ""))
 	if path == "*manifest*":
 		var key: String = "%d:%d" % [from_peer, transfer_id]
-		if _settings.get_bool(CollabSettings.KEY_APPROVE_JOINS, false) and not _approved.has(key):
+		# The relay's project mirror pulls the host project automatically; never
+		# stall it behind a UI approval prompt.
+		if from_peer != CollabConstants.MIRROR_PEER_ID and _settings.get_bool(CollabSettings.KEY_APPROVE_JOINS, false) and not _approved.has(key):
 			_pending_approvals[from_peer] = transfer_id
 			approval_required.emit(from_peer, transfer_id)
 			status.emit("Peer %d requested a project download - awaiting approval." % from_peer)

@@ -14,12 +14,15 @@ set -euo pipefail
 RELAY_BIND="${RELAY_BIND:-*}"
 RELAY_MAX_CLIENTS="${RELAY_MAX_CLIENTS:-64}"
 RELAY_PORT="${RELAY_PORT:-45900}"
+MIRROR_DIR="${MIRROR_DIR:-/relay/tools/relay_server/projects}"
 RENDEZVOUS_BIND="${RENDEZVOUS_BIND:-0.0.0.0}"
 RENDEZVOUS_PORT="${RENDEZVOUS_PORT:-9080}"
 
+mkdir -p "$MIRROR_DIR"
+
 relay_args=("$@")
 if [ "${#relay_args[@]}" -eq 0 ]; then
-    relay_args=(--port "$RELAY_PORT" --max-clients "$RELAY_MAX_CLIENTS" --bind "$RELAY_BIND")
+    relay_args=(--port "$RELAY_PORT" --max-clients "$RELAY_MAX_CLIENTS" --bind "$RELAY_BIND" --projects-dir "$MIRROR_DIR")
 fi
 
 godot --headless --script tools/relay_server/relay_server.gd -- "${relay_args[@]}" &

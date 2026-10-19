@@ -55,6 +55,7 @@ const WORKSPACE_MESSAGE_TYPES: Array[int] = [
 	CollabProtocol.MessageType.FILE_APPLY,
 	CollabProtocol.MessageType.SCENE_LIST,
 	CollabProtocol.MessageType.FILE_REMOVE,
+	CollabProtocol.MessageType.FILE_SYNC_MANIFEST,
 ]
 
 var session_manager: CollabSessionManager
@@ -152,7 +153,7 @@ func join(address: String, port: int, token: String = "") -> Error:
 ## Hosts a session through a dedicated relay. [param room] is a short,
 ## human-shareable code; [param token] authenticates joining clients. The relay
 ## forwards traffic so neither side needs an inbound-reachable port.
-func start_host_via_relay(relay_host: String, relay_port_arg: int, room: String, token: String, max_peers: int, mode: int, p_approve_joins: bool) -> Error:
+func start_host_via_relay(relay_host: String, relay_port_arg: int, room: String, token: String, max_peers: int, mode: int, p_approve_joins: bool, p_project_name: String = "") -> Error:
 	workspace_mode = mode
 	approve_joins = p_approve_joins
 	host_port = relay_port_arg
@@ -162,6 +163,7 @@ func start_host_via_relay(relay_host: String, relay_port_arg: int, room: String,
 	relay_address = relay_host
 	relay_port = relay_port_arg
 	relay_room = room
+	session_manager.relay_project_name = p_project_name
 	var err: Error = session_manager.host_via_relay(relay_host, relay_port_arg, room, token, max_peers)
 	if err != OK:
 		relay_enabled = false

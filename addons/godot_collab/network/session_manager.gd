@@ -52,6 +52,9 @@ var _relay_host_role: bool = false
 var _relay_room: String = ""
 var _relay_token: String = ""
 var _relay_max_peers: int = 0
+## Human-readable project name sent with a host REGISTER so the relay can create
+## a per-project live mirror directory (`live_<name>`).
+var relay_project_name: String = ""
 var _relay_registered: bool = false
 var _relay_app_id: int = 0
 var _relay_host_id: int = CollabRelayProtocol.HOST_APP_ID
@@ -441,7 +444,7 @@ func _relay_send_register() -> void:
 		return
 	var role: int = CollabRelayProtocol.Role.HOST if _relay_host_role else CollabRelayProtocol.Role.CLIENT
 	# Registration must bypass the outbox: it is what unlocks sending.
-	_relay_put_now(CollabRelayProtocol.encode_register(_relay_room, role, _relay_token, _relay_max_peers))
+	_relay_put_now(CollabRelayProtocol.encode_register(_relay_room, role, _relay_token, _relay_max_peers, relay_project_name))
 
 
 func _peer_ids() -> Array[int]:

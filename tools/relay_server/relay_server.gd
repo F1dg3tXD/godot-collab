@@ -19,8 +19,13 @@
 ## Then set Editor Settings -> `godot_collab/network/use_relay` to true and
 ## point `godot_collab/network/relay_address` at this machine.
 ##
-## The relay is transport-only: it never parses scene, workspace or transfer
-## payloads, never touches any filesystem, and holds rooms in memory only.
+## The relay is transport-only for live traffic, but it optionally keeps a
+## host-authoritative *project mirror* on disk (`--projects-dir`, default
+## `tools/relay_server/projects`): when a host registers it pulls the host's live
+## project (hash-diffed through the normal transfer protocol), persists later
+## file changes, and replays the stored state to clients that join afterwards.
+## Pass `--projects-dir ""` to disable mirroring and keep the relay purely
+## in-memory.
 extends SceneTree
 
 var _server: CollabRelayServer = null
@@ -38,9 +43,10 @@ func _init() -> void:
 	var port: int = int(args.get("port", CollabConstants.DEFAULT_RELAY_PORT))
 	var max_clients: int = int(args.get("max-clients", CollabRelayServer.DEFAULT_MAX_CLIENTS))
 	var bind_address: String = str(args.get("bind", "*"))
+	var projects_dir: String = str(args.get("projects-dir", _default_projects_dir()))
 
 	_server = CollabRelayServer.new(_logs)
-	var err: Error = _server.start(port, max_clients, bind_address)
+	var err: Error = _server.start(port, max_clients, bind_address, projects_dir)
 	if err != OK:
 		printerr("Relay failed to start on UDP %d: %s" % [port, error_string(err)])
 		quit(1)
@@ -76,6 +82,10 @@ func _parse_args(argv: PackedStringArray) -> Dictionary:
 			out["bind"] = argv[i + 1]
 			i += 2
 			continue
+		if arg == "--projects-dir" and i + 1 < argv.size():
+			out["projects-dir"] = argv[i + 1]
+			i += 2
+			continue
 		if arg == "--help" or arg == "-h":
 			out["help"] = true
 		i += 1
@@ -87,4 +97,10 @@ func _usage() -> void:
 	print("  --port <n>         UDP port to listen on (default %d)" % CollabConstants.DEFAULT_RELAY_PORT)
 	print("  --max-clients <n>  Maximum simultaneous ENet clients (default %d)" % CollabRelayServer.DEFAULT_MAX_CLIENTS)
 	print("  --bind <address>   Bind address (default * = all interfaces)")
+	print("  --projects-dir <d> Directory for host project mirrors (default %s)" % _default_projects_dir())
+	print("                     Pass \"\" to disable mirroring.")
 	print("  --help             Show this help")
+
+
+func _default_projects_dir() -> String:
+	return ProjectSettings.globalize_path("res://").path_join("tools/relay_server/projects")

@@ -154,6 +154,14 @@ func _test_filesync_paths() -> void:
 	# A dropped scene travels as a file unless it is open (protected separately).
 	_check(CollabWorkspaceService.is_source_file("scenes/main.tscn"), "tscn tracked for drop-sync")
 	_check(not CollabWorkspaceService.is_source_file("../escape.gd"), "traversal excluded")
+	# Full-filesystem sync: everything that is not explicitly excluded is
+	# watched, including dot-files at the root and uncommon extensions.
+	_check(CollabWorkspaceService.is_source_file(".gitignore"), "root .gitignore is watched")
+	_check(CollabWorkspaceService.is_source_file("scripts/player.gd.uid"), "uid sidecars are watched")
+	_check(CollabWorkspaceService.is_source_file("data/table.yaml"), "arbitrary extensions are watched")
+	_check(not CollabWorkspaceService.is_source_file("data/dump.tmp"), "temporary junk excluded")
+	_check(not CollabWorkspaceService.is_source_file("sub/.git/hooks/x.gd"), "nested .git dirs excluded")
+	_check(not CollabWorkspaceService.is_source_file(".godot"), "bare excluded name rejected")
 
 	# A real scan must pick up watched files and skip addons/ + caches.
 	var ws_root: String = "/tmp/opencode/filesync_ws"
@@ -269,6 +277,8 @@ func _init() -> void:
 	_test_scene_sync_loopback()
 	_test_general_property_sync()
 	_test_workspace_rename_delete_loopback()
+	_test_workspace_join_catchup()
+	_test_relay_project_mirror()
 	_test_rejoin_desync()
 	_test_multi_scene_isolation()
 	_test_cursor_state()
@@ -1576,6 +1586,175 @@ func _test_workspace_rename_delete_loopback() -> void:
 	host.free()
 	client_manager.free()
 	host_manager.free()
+
+
+
+## Join-time catch-up: a newly admitted peer must converge on the host's files
+## and the host must learn about files only the client has. Before this existed,
+## every file created before the session simply never travelled.
+func _test_workspace_join_catchup() -> void:
+	print("[workspace join catch-up]")
+	var logs := CollabLog.new()
+	var port: int = 45985
+
+	var host_root: String = "/tmp/opencode/ws_catchup_host"
+	var client_root: String = "/tmp/opencode/ws_catchup_client"
+	_reset_dir(host_root)
+	_reset_dir(client_root)
+	_write_text(host_root.path_join("project.godot"), "config_version=5\n")
+	_write_text(host_root.path_join("scripts/host_only.gd"), "extends Node\n")
+	_write_text(client_root.path_join("extra/client_only.gd"), "extends Node\n")
+
+	var host_manager := CollabSessionManager.new(logs)
+	var host := CollabSessionCoordinator.new()
+	host.setup(host_manager, logs)
+	var client_manager := CollabSessionManager.new(logs)
+	var client := CollabSessionCoordinator.new()
+	client.setup(client_manager, logs)
+
+	host.get_project_id = func() -> String: return "proj"
+	host.get_scene_id = func() -> String: return "res://w.tscn"
+	host.get_username = func() -> String: return "host"
+	client.get_project_id = func() -> String: return "proj"
+	client.get_scene_id = func() -> String: return "res://w.tscn"
+	client.get_username = func() -> String: return "peer"
+
+	var host_ws := CollabWorkspaceService.new()
+	host_ws.setup(host, CollabSettings.new(), logs, func() -> String: return host_root, {})
+	var client_ws := CollabWorkspaceService.new()
+	client_ws.setup(client, CollabSettings.new(), logs, func() -> String: return client_root, {})
+	# File sync is on from the start so the catch-up runs at admit time.
+	host_ws.file_sync_enabled = true
+	client_ws.file_sync_enabled = true
+
+	var err: Error = host.start_host(port, 4, CollabConstants.WorkspaceMode.HOST_WORKSPACE, false)
+	_check(err == OK, "catch-up host starts (%s)" % error_string(err))
+	err = client.join("127.0.0.1", port, "")
+	_check(err == OK, "catch-up client joins (%s)" % error_string(err))
+
+	var ready: bool = _pump_workspaces(host, client, host_ws, client_ws, 6000, func() -> bool:
+		return host.registry.count() >= 2 and client.registry.count() >= 2)
+	_check(ready, "catch-up peers connected")
+
+	var host_script: String = client_root.path_join("scripts/host_only.gd")
+	var client_script: String = host_root.path_join("extra/client_only.gd")
+	var converged: bool = _pump_workspaces(host, client, host_ws, client_ws, 9000, func() -> bool:
+		return FileAccess.file_exists(host_script) and FileAccess.file_exists(client_script))
+	_check(FileAccess.file_exists(host_script), "client received a pre-existing host file at join")
+	_check(FileAccess.file_exists(client_script), "host received a pre-existing client-only file at join")
+	_check(converged, "join-time catch-up converged both projects")
+
+	client_ws.free()
+	host_ws.free()
+	client.stop("cleanup")
+	host.stop("cleanup")
+	client.free()
+	host.free()
+	client_manager.free()
+	host_manager.free()
+
+
+## The relay mirrors the host's live project under the configured projects
+## directory and replays it to clients that join later.
+func _test_relay_project_mirror() -> void:
+	print("[relay project mirror]")
+	var logs := CollabLog.new()
+	var relay_port: int = 45986
+	var room: String = "MRRR11"
+	var token: String = "secret-token"
+	var projects_dir: String = "/tmp/opencode/relay_mirror_projects"
+	_reset_dir(projects_dir)
+
+	var host_root: String = "/tmp/opencode/mirror_host"
+	var client_root: String = "/tmp/opencode/mirror_client"
+	_reset_dir(host_root)
+	_reset_dir(client_root)
+	_write_text(host_root.path_join("project.godot"), "config_version=5\n")
+	_write_text(host_root.path_join("scenes/main.tscn"), "[gd_scene format=3]\n")
+
+	var relay := CollabRelayServer.new(logs)
+	_check(relay.start(relay_port, 16, "*", projects_dir) == OK, "mirror relay starts")
+
+	var host_manager := CollabSessionManager.new(logs)
+	var host := CollabSessionCoordinator.new()
+	host.setup(host_manager, logs)
+	host.get_project_id = func() -> String: return "proj"
+	host.get_scene_id = func() -> String: return "res://scenes/main.tscn"
+	host.get_username = func() -> String: return "host"
+	var host_transfer := CollabTransferManager.new()
+	host_transfer.setup(host, CollabSettings.new(), logs, func() -> String: return host_root)
+
+	var err: Error = host.start_host_via_relay("127.0.0.1", relay_port, room, token, 4, CollabConstants.WorkspaceMode.HOST_WORKSPACE, false, "MirrorTest")
+	_check(err == OK, "mirror host starts via relay (%s)" % error_string(err))
+
+	var mirror_root: String = projects_dir.path_join("live_MirrorTest")
+	var synced: bool = false
+	var deadline: int = Time.get_ticks_msec() + 12000
+	while Time.get_ticks_msec() < deadline:
+		relay.poll()
+		host.poll()
+		host_transfer.poll()
+		if FileAccess.file_exists(mirror_root.path_join("project.godot")) and FileAccess.file_exists(mirror_root.path_join("scenes/main.tscn")):
+			synced = true
+			break
+		OS.delay_msec(5)
+	_check(synced, "relay mirror pulled the host project")
+
+	# A live host-side add must be persisted in the mirror.
+	var host_ws := CollabWorkspaceService.new()
+	host_ws.setup(host, CollabSettings.new(), logs, func() -> String: return host_root, {})
+	host_ws.request_add_file("notes/live.txt", "hello mirror", true)
+	deadline = Time.get_ticks_msec() + 8000
+	var mirrored_add: bool = false
+	while Time.get_ticks_msec() < deadline:
+		relay.poll()
+		host.poll()
+		host_transfer.poll()
+		host_ws.poll()
+		if FileAccess.file_exists(mirror_root.path_join("notes/live.txt")):
+			mirrored_add = true
+			break
+		OS.delay_msec(5)
+	_check(mirrored_add, "relay mirror persisted a live file add")
+
+	# A joining client starts from the server-side mirror state.
+	var client_manager := CollabSessionManager.new(logs)
+	var client := CollabSessionCoordinator.new()
+	client.setup(client_manager, logs)
+	client.get_project_id = func() -> String: return "proj"
+	client.get_scene_id = func() -> String: return "res://scenes/main.tscn"
+	client.get_username = func() -> String: return "peer"
+	var client_ws := CollabWorkspaceService.new()
+	client_ws.setup(client, CollabSettings.new(), logs, func() -> String: return client_root, {})
+	err = client.join_via_relay("127.0.0.1", relay_port, room, token, CollabConstants.WorkspaceMode.HOST_WORKSPACE)
+	_check(err == OK, "mirror client joins via relay (%s)" % error_string(err))
+
+	deadline = Time.get_ticks_msec() + 12000
+	var replayed: bool = false
+	while Time.get_ticks_msec() < deadline:
+		relay.poll()
+		host.poll()
+		host_transfer.poll()
+		host_ws.poll()
+		client.poll()
+		client_ws.poll()
+		if FileAccess.file_exists(client_root.path_join("project.godot")) and FileAccess.file_exists(client_root.path_join("scenes/main.tscn")) and FileAccess.file_exists(client_root.path_join("notes/live.txt")):
+			replayed = true
+			break
+		OS.delay_msec(5)
+	_check(replayed, "joining client received the mirrored project state")
+
+	client_ws.free()
+	host_ws.free()
+	client.stop("cleanup")
+	host.stop("cleanup")
+	client.free()
+	host.free()
+	host_transfer.free()
+	client_manager.free()
+	host_manager.free()
+	relay.stop()
+	relay.free()
 
 
 ## Reproduces the reported post-crash bug: a client whose local scene does not

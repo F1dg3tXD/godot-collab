@@ -241,7 +241,6 @@ func _build_dock() -> void:
 	_dock.snapshot_apply_requested.connect(_on_snapshot_apply_requested)
 	_dock.snapshot_discard_requested.connect(_on_snapshot_discard_requested)
 	_dock.new_scene_requested.connect(_on_new_scene_requested)
-	_dock.add_file_requested.connect(_on_add_file_requested)
 	_dock.open_scene_requested.connect(_on_open_scene_requested)
 	_dock.refresh_scenes_requested.connect(_on_refresh_scenes_requested)
 	_dock.username_changed.connect(_on_username_changed)
@@ -331,7 +330,7 @@ func _host_via_relay(mode: int, max_peers: int, use_rendezvous: bool) -> void:
 	var relay_port: int = int(endpoint["port"])
 	var room: String = CollabInviteCode.generate_short_code()
 	var token: String = _random_token()
-	var err: Error = _coordinator.start_host_via_relay(relay_host, relay_port, room, token, max_peers, mode, _coordinator.approve_joins)
+	var err: Error = _coordinator.start_host_via_relay(relay_host, relay_port, room, token, max_peers, mode, _coordinator.approve_joins, _project_name())
 	if err != OK:
 		_dock.push_message("Failed to start relay session: %s" % error_string(err), true)
 		return
@@ -793,6 +792,14 @@ func _project_root() -> String:
 	return ProjectSettings.globalize_path("res://").simplify_path()
 
 
+func _project_name() -> String:
+	var root: String = _project_root().trim_suffix("/")
+	var name: String = root.get_file()
+	if name.is_empty() or name == ".":
+		name = str(ProjectSettings.get_setting("application/config/name", ""))
+	return name
+
+
 func _project_id() -> String:
 	if _project_id_cache.is_empty():
 		_project_id_cache = CollabIdentity.project_id_from_root(_project_root())
@@ -887,12 +894,6 @@ func _refresh_resource_file(res_path: String) -> void:
 
 func _on_new_scene_requested(path: String, root_class: String) -> void:
 	var err: String = _workspace.request_new_scene(path, root_class)
-	if not err.is_empty():
-		_dock.push_message(err, true)
-
-
-func _on_add_file_requested(path: String, content: String) -> void:
-	var err: String = _workspace.request_add_file(path, content, true)
 	if not err.is_empty():
 		_dock.push_message(err, true)
 

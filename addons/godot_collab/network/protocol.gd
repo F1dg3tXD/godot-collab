@@ -60,6 +60,7 @@ enum MessageType {
 	FILE_APPLY = 72, ## host -> peers: write this file content locally
 	SCENE_LIST = 73, ## host -> peers: known project scenes
 	FILE_REMOVE = 74, ## host -> peers: delete this project file locally (rename/delete)
+	FILE_SYNC_MANIFEST = 75, ## host -> joining peer: manifest of tracked files for catch-up
 }
 
 ## Named reasons a peer can be rejected or an operation refused.
@@ -253,6 +254,23 @@ static func _validate_payload(type: MessageType, payload: Dictionary) -> String:
 				return "FILE_REMOVE missing fields"
 			if not _check_str(payload, "path", 512):
 				return "FILE_REMOVE bad path"
+		MessageType.FILE_SYNC_MANIFEST:
+			if not payload.has("files") or typeof(payload["files"]) != TYPE_ARRAY:
+				return "FILE_SYNC_MANIFEST missing files"
+			var files_arr: Array = payload["files"]
+			if files_arr.size() > CollabConstants.MAX_SCENE_LIST:
+				return "FILE_SYNC_MANIFEST too large"
+			for f in files_arr:
+				if typeof(f) != TYPE_DICTIONARY:
+					return "FILE_SYNC_MANIFEST bad entry"
+				var fe: Dictionary = f
+				if not _check_str(fe, "path", 512):
+					return "FILE_SYNC_MANIFEST bad path"
+				if not fe.has("sha256"):
+					return "FILE_SYNC_MANIFEST missing sha256"
+				var s: Variant = fe["sha256"]
+				if typeof(s) != TYPE_STRING or (s as String).length() > 64:
+					return "FILE_SYNC_MANIFEST bad sha256"
 		_:
 			pass
 	return ""
@@ -281,7 +299,7 @@ static func _check_int(payload: Dictionary, key: String) -> bool:
 
 
 static func _type_count() -> int:
-	return MessageType.FILE_REMOVE + 1
+	return MessageType.FILE_SYNC_MANIFEST + 1
 
 
 static func _append_u32(buf: PackedByteArray, value: int) -> void:

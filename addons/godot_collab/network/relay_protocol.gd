@@ -42,8 +42,8 @@ enum Role {
 const HOST_APP_ID: int = 1
 
 
-static func encode_register(room: String, role: int, token: String, max_peers: int) -> PackedByteArray:
-	return _frame(Kind.REGISTER, var_to_bytes({"room": room, "role": role, "token": token, "max_peers": max_peers}))
+static func encode_register(room: String, role: int, token: String, max_peers: int, project_name: String = "") -> PackedByteArray:
+	return _frame(Kind.REGISTER, var_to_bytes({"room": room, "role": role, "token": token, "max_peers": max_peers, "project_name": project_name}))
 
 
 static func encode_registered(peer_id: int, host_id: int) -> PackedByteArray:
@@ -122,6 +122,7 @@ static func decode(packet: PackedByteArray) -> Dictionary:
 			result["role"] = int((payload as Dictionary).get("role", Role.CLIENT))
 			result["token"] = str((payload as Dictionary).get("token", ""))
 			result["max_peers"] = int((payload as Dictionary).get("max_peers", 0))
+			result["project_name"] = str((payload as Dictionary).get("project_name", ""))
 		Kind.REGISTERED:
 			result["peer_id"] = int((payload as Dictionary).get("peer_id", 0))
 			result["host_id"] = int((payload as Dictionary).get("host_id", HOST_APP_ID))

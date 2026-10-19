@@ -34,22 +34,6 @@ const EXCLUDED_PREFIXES: Array[String] = [".godot/", ".git/", "addons/"]
 ## Prefixes excluded from the source-file watcher only (never from scene lists).
 const FILESYNC_EXCLUDED_PREFIXES: Array[String] = [".godot/", ".git/", "addons/", ".vscode/", ".idea/", ".import/", "android/"]
 
-## Extensions relayed by the file watcher: source text plus binary assets a user
-## may drag into the project (images, models, audio, fonts, video). `.tscn`/`.scn`
-## are included so a dropped scene also travels, but a scene that is currently
-## open in the editor is protected: it is synchronised as structured operations
-## instead, and its file is never overwritten underneath the editor.
-const FILESYNC_EXTENSIONS: Array[String] = [
-	".gd", ".gdshader", ".shader", ".gdshaderinc", ".tres", ".res",
-	".json", ".cfg", ".txt", ".csv", ".xml", ".md", ".po", ".svg", ".ini", ".toml",
-	".tscn", ".scn", ".escn",
-	".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tga", ".gif", ".hdr", ".exr", ".dds", ".ktx",
-	".obj", ".mtl", ".gltf", ".glb", ".fbx", ".dae", ".blend",
-	".wav", ".ogg", ".mp3", ".oggstr",
-	".ttf", ".otf", ".woff", ".woff2", ".fnt",
-	".ogv",
-]
-
 ## Scene-file extensions. A file with one of these extensions that is currently
 ## open in the editor is never relayed or overwritten as a raw file.
 const SCENE_EXTENSIONS: Array[String] = [".tscn", ".scn", ".escn"]
@@ -208,6 +192,9 @@ func _on_workspace_message(from_peer: int, type: int, payload: Dictionary) -> vo
 			if not _coordinator.is_host():
 				var scenes: Variant = payload.get("scenes", [])
 				scene_list_received.emit(scenes if typeof(scenes) == TYPE_ARRAY else [], int(payload.get("revision", 0)))
+		CollabProtocol.MessageType.FILE_SYNC_MANIFEST:
+			if not _coordinator.is_host():
+				_handle_incoming_manifest(from_peer, payload)
 
 
 func _on_peer_ready(peer_id: int) -> void:
@@ -215,6 +202,7 @@ func _on_peer_ready(peer_id: int) -> void:
 		return
 	if _can_request():
 		_send_scene_list_to(peer_id)
+		_send_file_manifest(peer_id)
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +268,7 @@ func _host_create_scene(request_id: int, path: String, root_class: String, from_
 	_refresh_filesystem(rel)
 	_send_result(from_peer, request_id, true, rel, "Scene created.")
 	status.emit("Created scene '%s'." % rel)
+	_refresh_baseline_entry(rel)
 	broadcast_scene_list()
 
 
@@ -316,6 +305,7 @@ func _host_add_file(request_id: int, path: String, bytes: PackedByteArray, overw
 	_refresh_baseline_entry(rel)
 	_send_result(from_peer, request_id, true, rel, "File added.")
 	status.emit("Added file '%s'." % rel)
+	broadcast_scene_list()
 
 
 func _host_delete_file(request_id: int, path: String, from_peer: int) -> void:
@@ -532,8 +522,9 @@ func _scan_and_sync() -> void:
 func _relay_local_change(rel: String, root: String) -> void:
 	if not _is_filesync_path(rel):
 		return
-	if _is_protected_scene(rel):
-		# Open scenes travel as structured operations; never ship the raw file.
+	# Host may ship changes to open scenes (raw file sync after save); peers must
+	# never overwrite open scenes from the host.
+	if _is_protected_scene(rel) and not _coordinator.is_host():
 		return
 	if not _can_request():
 		return
@@ -590,9 +581,9 @@ func _walk_files(absolute: String, rel_prefix: String, out: Dictionary) -> void:
 	dir.list_dir_begin()
 	var name: String = dir.get_next()
 	while name != "":
-		if name.begins_with(".") and name != "." and name != "..":
-			name = dir.get_next()
-			continue
+		# Hidden entries are walked too: version-control metadata at the root
+		# (.gitignore, .gdignore, ...) belongs to the project. Generated caches
+		# and vendor trees are excluded by name in _filesync_dir_excluded.
 		var rel: String = (rel_prefix + "/" + name) if not rel_prefix.is_empty() else name
 		var abs: String = absolute.path_join(name)
 		if dir.current_is_dir():
@@ -605,10 +596,7 @@ func _walk_files(absolute: String, rel_prefix: String, out: Dictionary) -> void:
 
 
 func _filesync_dir_excluded(rel: String) -> bool:
-	for prefix in FILESYNC_EXCLUDED_PREFIXES:
-		if (rel + "/").begins_with(prefix):
-			return true
-	return false
+	return _path_excluded(rel, FILESYNC_EXCLUDED_PREFIXES)
 
 
 func _is_filesync_path(rel: String) -> bool:
@@ -628,19 +616,34 @@ func _is_protected_scene(rel: String) -> bool:
 	return paths.has(res_path)
 
 
+## True when any path segment of [param rel] matches one of the directory-style
+## [param prefixes] (each is a bare directory name like [code].git/[/code]).
+static func _path_excluded(rel: String, prefixes: Array[String]) -> bool:
+	var segments: PackedStringArray = rel.split("/", false)
+	for seg in segments:
+		for prefix in prefixes:
+			var pref: String = prefix.trim_suffix("/")
+			if seg == pref:
+				return true
+	return false
+
+
 ## True when [param rel] is a project source file the watcher may relay. Excludes
 ## generated/vendor directories and, critically, [code]addons/[/code].
 static func is_source_file(rel: String) -> bool:
 	var normalized: String = CollabPathGuard.normalize_relative(rel)
 	if normalized.is_empty():
 		return false
-	for prefix in FILESYNC_EXCLUDED_PREFIXES:
-		if normalized.begins_with(prefix):
-			return false
+	if _path_excluded(normalized, FILESYNC_EXCLUDED_PREFIXES):
+		return false
 	if FILESYNC_FILES.has(normalized):
 		return true
 	var ext: String = "." + normalized.get_extension().to_lower()
-	return FILESYNC_EXTENSIONS.has(ext)
+	# Allow most files; explicitly reject temporary/downloaded junk.
+	const EXCLUDED_EXTS: Array[String] = [".tmp", ".swp", ".swo", ".part", ".crdownload"]
+	if EXCLUDED_EXTS.has(ext):
+		return false
+	return true
 
 
 ## Relative paths currently tracked by the file watcher. Exposed for tests.
@@ -697,11 +700,13 @@ func _can_request() -> bool:
 
 
 func _is_writable_path(rel: String) -> bool:
-	for prefix in EXCLUDED_PREFIXES:
-		if rel.begins_with(prefix):
-			return false
-	# Project configuration is host-authoritative and small enough to relay.
+	# Excluded prefixes are matched per path segment so nested copies
+	# (`sub/.git/hooks/x.gd`) cannot slip through.
+	if _path_excluded(rel, EXCLUDED_PREFIXES):
+		return false
 	if FILESYNC_FILES.has(rel):
+		return true
+	if is_source_file(rel):
 		return true
 	var ext: String = "." + rel.get_extension().to_lower()
 	return CollabConstants.WRITABLE_EXTENSIONS.has(ext)
@@ -769,3 +774,106 @@ func _next_request_id() -> int:
 func _refresh_filesystem(rel: String) -> void:
 	if _editor.has("refresh_resource_file") and _editor["refresh_resource_file"].is_valid():
 		_editor["refresh_resource_file"].call("res://" + rel if not rel.begins_with("res://") else rel)
+
+
+func _send_file_manifest(peer_id: int) -> void:
+	if _coordinator == null or not _coordinator.is_host():
+		return
+	if not file_sync_enabled or not _can_request():
+		return
+	var root: String = str(_project_root.call())
+	if root.is_empty():
+		return
+	var current: Dictionary = {}
+	_walk_files(root, "", current)
+	var files: Array = []
+	for rel in current.keys():
+		var info: Dictionary = current[rel]
+		files.append({
+			"path": rel,
+			"size": int(info.get("size", 0)),
+			"sha256": str(info.get("sha", "")),
+		})
+	_coordinator.send_workspace_to(peer_id, CollabProtocol.MessageType.FILE_SYNC_MANIFEST, {
+		"files": files,
+		"revision": _host_revision,
+	})
+	# Push host files so a joining peer converges even for files that predate the
+	# session. Bounded so a huge project cannot stall the session; leftovers can
+	# use the regular project-download path.
+	var sent: int = 0
+	var sent_bytes: int = 0
+	var max_files: int = 256
+	var max_bytes: int = 64 * 1024 * 1024
+	for rel in current.keys():
+		if sent >= max_files or sent_bytes >= max_bytes:
+			break
+		var bytes: PackedByteArray = FileAccess.get_file_as_bytes(root.path_join(rel))
+		if bytes.size() > CollabConstants.MAX_WORKSPACE_FILE_BYTES:
+			continue
+		if sent_bytes + bytes.size() > max_bytes:
+			continue
+		var ext: String = "." + rel.get_extension().to_lower()
+		_coordinator.send_workspace_to(peer_id, CollabProtocol.MessageType.FILE_APPLY, {
+			"path": rel,
+			"data": bytes,
+			"scene": SCENE_EXTENSIONS.has(ext),
+		})
+		sent += 1
+		sent_bytes += bytes.size()
+	status.emit("Sent file manifest to peer %d (%d files; pushed %d)." % [peer_id, files.size(), sent])
+
+
+func _handle_incoming_manifest(from_peer: int, payload: Dictionary) -> void:
+	if _coordinator == null or _coordinator.is_host():
+		return
+	if not file_sync_enabled or not _can_request():
+		return
+	var files_arr: Variant = payload.get("files", [])
+	if typeof(files_arr) != TYPE_ARRAY:
+		return
+	var root: String = str(_project_root.call())
+	if root.is_empty():
+		return
+	var host_files: Dictionary = {}
+	for f in files_arr:
+		if typeof(f) != TYPE_DICTIONARY:
+			continue
+		var rel_h: String = str(f.get("path", ""))
+		if rel_h.is_empty():
+			continue
+		host_files[rel_h] = f
+	var current: Dictionary = {}
+	_walk_files(root, "", current)
+	# Host is authoritative: it pushes its own copy on join. The client only
+	# uploads files the host does not know about, keeping convergence one-way
+	# per file and avoiding a conflict protocol.
+	var pushed: int = 0
+	var pushed_bytes: int = 0
+	var max_files: int = 256
+	var max_bytes: int = 64 * 1024 * 1024
+	for rel in current.keys():
+		if pushed >= max_files or pushed_bytes >= max_bytes:
+			break
+		if host_files.has(rel):
+			continue
+		if not _is_writable_path(rel):
+			continue
+		var absolute: String = CollabPathGuard.resolve_within(root, rel)
+		if absolute.is_empty():
+			continue
+		var bytes: PackedByteArray = FileAccess.get_file_as_bytes(absolute)
+		if bytes.size() > CollabConstants.MAX_WORKSPACE_FILE_BYTES:
+			continue
+		if pushed_bytes + bytes.size() > max_bytes:
+			continue
+		_coordinator.send_workspace(CollabProtocol.MessageType.WORKSPACE_REQUEST, {
+			"request_id": _next_request_id(),
+			"kind": CollabConstants.WorkspaceOp.ADD_FILE,
+			"path": rel,
+			"overwrite": false,
+			"data": bytes,
+		})
+		pushed += 1
+		pushed_bytes += bytes.size()
+	status.emit("Uploaded %d file(s) missing on the host." % pushed)

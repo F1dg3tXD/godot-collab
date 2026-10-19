@@ -24,7 +24,10 @@ are listed explicitly so nothing here is mistaken for working functionality.
   reconnect), a **multi-scene isolation** flow (host focused on scene B while
   a client edits scene A), and a **relay** flow (a `CollabRelayServer` plus a
   relay host and relay client in one process: registration, HELLO routing, cursor
-  relay, token rejection, host departure). It passes (see [`TESTING.md`](TESTING.md)).
+  relay, token rejection, host departure), plus a **workspace join-time
+  catch-up** flow (`FILE_SYNC_MANIFEST`) and a **relay project mirror** flow
+  (relay pulls the host project into `live_<project>/` and replays it to a
+  later-joining client). It passes (see [`TESTING.md`](TESTING.md)).
 - The interactive editor behaviours (dock UI, top-toolbar buttons, remote cursor
   drawing, `_forward_3d_gui_input` / `_forward_canvas_gui_input` /
   `_forward_canvas_draw_over_viewport`, scene
@@ -48,6 +51,11 @@ are listed explicitly so nothing here is mistaken for working functionality.
   real internet relay or a real NAT. Relay mode is the **default** hosting path;
   if no relay address is configured the host falls back to a direct session with a
   warning, and direct LAN hosting is still available (uncheck *Use a relay server*).
+- The **relay project mirror** (opt-in via `--projects-dir`) is host-authoritative
+  and loopback-tested only. Files above `MAX_WORKSPACE_FILE_BYTES` (2 MiB) and
+  content beyond `MAX_MIRROR_FILES` (20000) / the pull caps are not mirrored;
+  the mirror is a convenience cache for late joiners, not a backup or the
+  authoritative project copy. Nothing is ever mirrored back onto the host.
 - **After a relay or direct connection is established, there is no relay
   fallback.** If the relay process stops or the host leaves, clients are
   disconnected; there is no automatic reconnection or migration.
@@ -208,15 +216,25 @@ are listed explicitly so nothing here is mistaken for working functionality.
 ## Source file sync (host-authoritative)
 
 - When enabled (`godot_collab/collaboration/sync_source_files`, default on) the
-  host and clients watch eligible **source files** and relay changed file
-  contents to the host, which applies and re-broadcasts them. This covers scripts,
-  resources (`FILESYNC_EXTENSIONS`), binary assets (images, 3D models, audio,
-  fonts), `project.godot` and `export_presets.cfg`. `.import` files are not
-  watched (import churn).
+  host and clients watch project files and relay changed contents to the host,
+  which applies and re-broadcasts them. Eligibility is an **exclusion policy**,
+  not an extension allow-list: everything travels except generated/vendor
+  directories (`.godot/`, `.git/`, `.vscode/`, `.idea/`, `.import/`, `android/`),
+  **`addons/`**, and temporary junk (`.tmp`, `.swp`, `.swo`, `.part`,
+  `.crdownload`). Excluded directories are matched per path segment. Per-file
+  content is capped at `MAX_WORKSPACE_FILE_BYTES` (2 MiB); larger files must use
+  the full project download.
+- **Join-time catch-up is bounded.** On admit, the host sends a file manifest and
+  pushes its own files (256 files / 64 MiB caps, per-file 2 MiB); the client
+  uploads only files the host lacks (same caps). Projects beyond those caps need
+  the full project-download path to converge fully. Conflict rule: host wins per
+  file; a client's file is uploaded only when the host does not have that path.
 - Scene files (`.tscn`/`.scn`/`.escn`) that are **open in the editor** are
-  protected: they go through the structured scene-operation stream and the file
-  watcher neither relays nor writes them. A scene file that is dropped but not
-  open travels as an ordinary file.
+  protected on receivers: they go through the structured scene-operation stream,
+  so an incoming `FILE_APPLY` never overwrites them underneath the editor. On the
+  host, a *saved* open scene is relayed raw so peers without it open — and the
+  relay's server-side mirror — see the scene content. A scene file that is
+  dropped but not open travels as an ordinary file.
 - Written to disk only; never imported or executed by the add-on, and only
   inside the approved project root.
 - **Generated/cache data is excluded:** `.godot/`, `.git/`, and, critically,

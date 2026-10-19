@@ -41,7 +41,10 @@ changes; keep them in sync when behavior changes.
 - All eight original milestones (plugin foundation, ENet session layer, invite
   codes/connectivity, remote cursors/presence, collaborative scene protocol,
   saving, project download, Git presence mode) are implemented and documented.
-- The headless test suite passes: **301 checks, 0 failures**.
+- The headless test suite passes: **327 checks, 0 failures**.
+- Full project file sync (exclusion-policy eligibility, rename/delete, and
+  join-time `FILE_SYNC_MANIFEST` catch-up) and the relay's optional
+  server-side project mirror are implemented; both are covered by the suite.
 - The relay server, rendezvous service, and Docker image are implemented; the
   rendezvous `Store` has its own Python unit tests (6 tests, passing).
 - What is *not* verified or not implemented is listed explicitly in
@@ -130,7 +133,7 @@ Session tokens are never written to committed project files.
 ## Networking
 
 - **Transport:** one `ENetMultiplayerPeer` per session, polled from `_process`.
-- **Framing (`CollabProtocol`):** magic + `PROTOCOL_VERSION` (currently `4`) +
+- **Framing (`CollabProtocol`):** magic + `PROTOCOL_VERSION` (currently `5`) +
   type + length, 10-byte header, `MAX_PACKET_PAYLOAD` = 4 MiB. Decode validates
   magic, version, length, and per-type payload shape.
 - **Delivery:** reliable for session management, scene operations and transfer
@@ -140,7 +143,7 @@ Session tokens are never written to committed project files.
   (`CURSOR_UPDATE`/`SCENE_FOCUS`), scene ops (`OPS`/`OPS_ACK`/`OPS_REJECT`/
   snapshot/resync/conflict), saving (`SAVE_REQUEST`/`SAVE_RESULT`), transfer
   (`TRANSFER_*`), and workspace authoring (`WORKSPACE_REQUEST`/`RESULT`,
-  `FILE_APPLY`/`FILE_REMOVE`, `SCENE_LIST`).
+  `FILE_APPLY`/`FILE_REMOVE`, `SCENE_LIST`, `FILE_SYNC_MANIFEST`).
 - **Validation everywhere:** packet types and payload sizes are validated;
   operations and transfers are rate-limited; recursion/size/element caps apply.
 
@@ -168,8 +171,13 @@ which short codes from the same server resolve with no manual setup.
 The relay (`CollabRelayServer`) is a room-based headless `SceneTree` script: it
 assigns the host application id `1` and clients `2, 3, …`, rewrites each
 forwarded packet's origin (so peers cannot spoof identity), emits membership
-events, never parses application payloads, and stores nothing on disk.
-`CollabRelayProtocol` frames it with a 10-byte `GCRL` header.
+events, and never interprets application payloads. By default it stores
+nothing on disk, but when started with `--projects-dir` it keeps a
+host-authoritative **live mirror** of the host project under
+`live_<project_name>/`: the first host to register a room uploads its project
+through the ordinary transfer protocol, later clients are replayed that mirror
+state, and live file edits (`FILE_APPLY`/`FILE_REMOVE`/`SCENE_LIST`) are applied
+to it. `CollabRelayProtocol` frames it with a 10-byte `GCRL` header.
 
 The Docker image (`tools/relay_server/`) runs the relay (UDP 45900) **and** the
 Python rendezvous (TCP 9080) together. The rendezvous URL for a relay host is
@@ -240,11 +248,16 @@ structured operation protocol rather than overwriting `.tscn` files.
   order + base revision; conflicts surface as visible notices, never silent
   drops.
 - **Workspace authoring (`CollabWorkspaceService`):** the host validates and
-  distributes new scenes, added/renamed/deleted files, and changed **source
-  files** (scripts, shaders, resources, `project.godot`, binary assets). Files
-  under `addons/` and generated caches (`.godot/`, `.git/`) are excluded. A file
-  that is open in the editor is protected and driven by the op stream instead of
-  raw writes. Transferred files are written to disk, never executed.
+  distributes new scenes and every added/renamed/deleted/changed project file.
+  Eligibility is an exclusion policy, not an extension allow-list: everything
+  travels except `addons/`, generated/vendor dirs (`.godot/`, `.git/`,
+  `.vscode/`, `.idea/`, `.import/`, `android/`, matched per path segment), and
+  temporary junk. On admit, the host pushes a `FILE_SYNC_MANIFEST` plus its own
+  files (256 files / 64 MiB, per-file 2 MiB) and the client uploads only files
+  the host lacks; host wins per file. A file open in the editor is protected on
+  receivers (driven by the op stream), while the host relays its saved open
+  scenes raw so peers without the scene open and the relay mirror see them.
+  Transferred files are written to disk, never executed.
 
 ## Saving
 
@@ -300,7 +313,7 @@ Headless parse smoke (should print nothing):
   | grep -iE "SCRIPT ERROR|Parse Error|Compile Error|Failed to load"
 ```
 
-Headless test suite (expect `301 checks, 0 failures` / `RESULT: PASS`):
+Headless test suite (expect `327 checks, 0 failures` / `RESULT: PASS`):
 
 ```sh
 ~/.apps/Godot/Godot_v4.7.2-stable_linux.x86_64 --headless \
@@ -313,7 +326,9 @@ Rendezvous unit tests (expect `OK`):
 python3 tools/rendezvous_server/test_rendezvous.py
 ```
 
-Relay server (first run builds the class cache):
+Relay server (first run builds the class cache; add
+`--projects-dir tools/relay_server/projects` to enable the live project
+mirror):
 
 ```sh
 GODOT=~/.apps/Godot/Godot_v4.7.2-stable_linux.x86_64 \

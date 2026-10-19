@@ -14,6 +14,7 @@
 #
 # Environment variables:
 #   RELAY_PORT (45900)   RELAY_BIND (*)   RELAY_MAX_CLIENTS (64)
+#   MIRROR_DIR (/relay/tools/relay_server/projects)
 #   RENDEZVOUS_PORT (9080)   RENDEZVOUS_BIND (0.0.0.0)
 #
 # The image is self-contained: it installs a pinned, checksum-verified Godot
@@ -52,6 +53,8 @@ RUN godot --headless --import || true
 RUN chmod +x tools/relay_server/entrypoint.sh
 
 ENV GODOT_SILENCE_ROOT_WARNING=1
+RUN mkdir -p /relay/tools/relay_server/projects
+VOLUME ["/relay/tools/relay_server/projects"]
 EXPOSE 45900/udp
 EXPOSE 9080/tcp
 

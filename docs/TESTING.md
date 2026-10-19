@@ -13,11 +13,12 @@ cd /path/to/godot-colab
 - Exit code `0` and a final `RESULT: PASS` mean all checks passed.
 - Exit code `1` with `RESULT: FAIL` means at least one check failed; each failure
   is printed individually.
-- The suite (currently **301 checks**) covers: protocol framing/validation (bad
+- The suite (currently **327 checks**) covers: protocol framing/validation (bad
   magic, truncated packets, oversized payloads, non-dictionary payloads, the
   `CURSOR_UPDATE` `3d`/`2d` view shapes, and the
   workspace message types `WORKSPACE_REQUEST`/`WORKSPACE_RESULT`/`FILE_APPLY`/
-  `FILE_REMOVE`/`SCENE_LIST`, including text **and** byte payloads), **relay
+  `FILE_REMOVE`/`SCENE_LIST`/`FILE_SYNC_MANIFEST`, including text **and** byte
+  payloads), **relay
   framing** (`CollabRelayProtocol` register/registered/member-join/data round
   trips, short and oversized packets rejected), invitation code
   encode/decode (including the relay `gc2.…` form **and its embedded rendezvous
@@ -65,7 +66,13 @@ cd /path/to/godot-colab
   that registration assigns ids, that a HELLO is routed host→client via the relay,
   that a cursor packet is relayed, and that a host departure disconnects the
   client. A companion `_test_relay_token_rejection` asserts a client with a bad
-  room token is rejected with a clear error.
+  room token is rejected with a clear error. **Workspace convergence** is covered
+  by `_test_workspace_rename_delete_loopback` (rename/delete propagation),
+  `_test_workspace_join_catchup` (a peer admitted after files exist receives the
+  host's files and the host receives the client's extra file via
+  `FILE_SYNC_MANIFEST`), and `_test_relay_project_mirror` (a relay started with
+  `--projects-dir` pulls the host project into `live_<project>/`, persists live
+  file adds there, and replays the mirror to a client that joins later).
 
 Editor load / parse smoke check (confirms the plugin script parses in an editor
 context):
@@ -204,11 +211,12 @@ instances, enable **Godot Collab** in each, and run through the checks:
     visibility / move a node from the client and confirm it affects the
     **same** node on the host (no phantom node, no wrong-node edit).
 9b. **Workspace authoring.** From the client dock, use **New scene...** to
-    create `res://scenes/test_from_client.tscn` and **Add file...** to add a
-    small `.gd` file. Confirm both peers receive the files (the client's local
+    create `res://scenes/test_from_client.tscn`. Then create a new `.gd` file
+    directly in either editor's filesystem (no dock button — files sync
+    automatically). Confirm both peers receive the files (the client's local
     copy appears, and the host's Project filesystem refreshes). Use **Open
     selected** to open the new scene. Confirm a path with `..`, an absolute path,
-    or a disallowed extension is rejected.
+    or an excluded path (`addons/...`, `.godot/...`) is rejected.
 10. **Project download + checksum.** From the client, request a project
     download to an approved empty directory. Verify progress, completion, that
     `project.godot` and required files exist, and that no checksum errors are
@@ -229,8 +237,15 @@ instances, enable **Godot Collab** in each, and run through the checks:
 
     ```sh
     GODOT=~/.apps/Godot/Godot_v4.7.2-stable_linux.x86_64 \
-      tools/relay_server/run.sh --port 45900
+      tools/relay_server/run.sh --port 45900 \
+      --projects-dir tools/relay_server/projects
     ```
+
+    With `--projects-dir` the relay keeps a live mirror under
+    `projects/live_<project_name>/`: after hosting, confirm the directory
+    fills with the host's files; after the client joins, confirm its own
+    non-shared file appears on the host and in the mirror. Leave the mirror
+    option off to run the relay stateless (the default).
 
     (`run.sh` builds the GDScript class cache on first run; on a fresh checkout
     the plain `godot --headless --script ...` form fails with

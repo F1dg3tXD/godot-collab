@@ -21,6 +21,8 @@ signal status(text: String)
 
 const DEFAULT_MAX_CLIENTS: int = 64
 const MAX_ROOM_MEMBERS: int = 32
+## Sentinel enet id for the optional per-room project mirror (not a real peer).
+const MIRROR_ENET_ID: int = -1
 
 var _peer: ENetMultiplayerPeer = null
 var _running: bool = false
@@ -28,9 +30,15 @@ var _running: bool = false
 var _peers: Dictionary = {}
 ## room -> { token: String, host_id: int, max_peers: int, members: { app_id: int: enet_id: int } }
 var _rooms: Dictionary = {}
+## room -> CollabProjectMirror (only when a projects directory is configured)
+var _mirrors: Dictionary = {}
 var _app_to_enet: Dictionary = {}
 var _next_app_id: int = 2
 var _logs: CollabLog = null
+## When set, the relay mirrors each hosted project under this directory.
+var _projects_dir: String = ""
+## Deferred frames (e.g. a mirror snapshot replayed to a joining client).
+var _outbox: Array = []
 
 
 func _init(logs: CollabLog = null) -> void:
@@ -45,9 +53,12 @@ func is_running() -> bool:
 	return _running
 
 
-func start(port: int, max_clients: int = DEFAULT_MAX_CLIENTS, bind_address: String = "*") -> Error:
+func start(port: int, max_clients: int = DEFAULT_MAX_CLIENTS, bind_address: String = "*", projects_dir: String = "") -> Error:
 	if _running:
 		return ERR_ALREADY_IN_USE
+	_projects_dir = projects_dir
+	if not _projects_dir.is_empty():
+		DirAccess.make_dir_recursive_absolute(_projects_dir)
 	var peer := ENetMultiplayerPeer.new()
 	var err: Error = peer.create_server(port, maxi(1, max_clients), 3)
 	if err != OK:
@@ -74,7 +85,9 @@ func stop() -> void:
 	_peer = null
 	_peers.clear()
 	_rooms.clear()
+	_mirrors.clear()
 	_app_to_enet.clear()
+	_outbox.clear()
 	_next_app_id = 2
 	_running = false
 
@@ -87,6 +100,21 @@ func poll() -> void:
 		var from_peer: int = _peer.get_packet_peer()
 		var raw: PackedByteArray = _peer.get_packet()
 		_handle(from_peer, raw)
+	_flush_outbox()
+
+
+func _flush_outbox() -> void:
+	if _outbox.is_empty():
+		return
+	var batch: Array = _outbox
+	_outbox = []
+	var sent: int = 0
+	for entry in batch:
+		if sent >= 128:
+			_outbox.append(entry)
+			continue
+		_send_to_enet(int(entry["enet_id"]), entry["bytes"])
+		sent += 1
 
 
 func room_count() -> int:
@@ -128,6 +156,7 @@ func _handle_register(enet_id: int, decoded: Dictionary) -> void:
 		var room_max: int = clampi(requested_max if requested_max > 0 else MAX_ROOM_MEMBERS, 1, MAX_ROOM_MEMBERS)
 		_rooms[room] = {"token": token, "host_id": CollabRelayProtocol.HOST_APP_ID, "max_peers": room_max, "members": {}}
 		_register_member(enet_id, room, role)
+		_setup_mirror(room, enet_id, str(decoded.get("project_name", "")))
 		_log_info("Relay room '%s' opened by host." % room)
 		return
 	# Client registration.
@@ -138,10 +167,11 @@ func _handle_register(enet_id: int, decoded: Dictionary) -> void:
 	if str(room_data.get("token", "")) != token:
 		_reject(enet_id, "Invalid session token for room '%s'." % room)
 		return
-	if (room_data["members"] as Dictionary).size() >= int(room_data.get("max_peers", MAX_ROOM_MEMBERS)):
+	if _room_client_count(room_data) >= int(room_data.get("max_peers", MAX_ROOM_MEMBERS)):
 		_reject(enet_id, "Room '%s' is full." % room)
 		return
 	_register_member(enet_id, room, role)
+	_push_mirror_snapshot(room, enet_id)
 
 
 func _register_member(enet_id: int, room: String, role: int) -> void:
@@ -219,11 +249,14 @@ func _close_room(room: String) -> void:
 	var members: Dictionary = (_rooms[room]["members"] as Dictionary).duplicate()
 	for app_id in members.keys():
 		var enet_id: int = int(members[app_id])
+		if enet_id == MIRROR_ENET_ID:
+			continue
 		_peers.erase(enet_id)
 		_app_to_enet.erase(app_id)
 		if _peer != null and _peer.get_peer(enet_id) != null:
 			_peer.disconnect_peer(enet_id, false)
 	_rooms.erase(room)
+	_mirrors.erase(room)
 	_log_info("Relay room '%s' closed." % room)
 
 
@@ -247,7 +280,7 @@ func _reject(enet_id: int, message: String) -> void:
 # ---------------------------------------------------------------------------
 
 func _send_to_enet(enet_id: int, bytes: PackedByteArray) -> void:
-	if _peer == null:
+	if _peer == null or enet_id == MIRROR_ENET_ID:
 		return
 	_peer.set_target_peer(enet_id)
 	_peer.set_transfer_mode(MultiplayerPeer.TRANSFER_MODE_RELIABLE)
@@ -261,6 +294,9 @@ func _send_to_app(room: String, app_id: int, bytes: PackedByteArray) -> void:
 	var members: Dictionary = _rooms[room]["members"]
 	if not members.has(app_id):
 		return
+	if int(members[app_id]) == MIRROR_ENET_ID:
+		_mirror_ingest_frame(room, bytes)
+		return
 	_send_to_enet(int(members[app_id]), bytes)
 
 
@@ -271,7 +307,78 @@ func _broadcast_room(room: String, bytes: PackedByteArray, except_app: int) -> v
 	for app_id in members.keys():
 		if int(app_id) == except_app:
 			continue
+		if int(members[app_id]) == MIRROR_ENET_ID:
+			_mirror_ingest_frame(room, bytes)
+			continue
 		_send_to_enet(int(members[app_id]), bytes)
+
+
+# ---------------------------------------------------------------------------
+# Project mirror
+# ---------------------------------------------------------------------------
+
+func _setup_mirror(room: String, host_enet_id: int, project_name: String) -> void:
+	if _projects_dir.is_empty():
+		return
+	var safe: String = _sanitize_project_name(project_name)
+	var root: String = _projects_dir.path_join("live_" + safe)
+	var mirror := CollabProjectMirror.new()
+	mirror.setup(root)
+	_mirrors[room] = mirror
+	(_rooms[room]["members"] as Dictionary)[CollabConstants.MIRROR_PEER_ID] = MIRROR_ENET_ID
+	mirror.begin_host_sync(_mirror_send_fn(room))
+	_log_info("Relay mirroring project '%s' for room '%s' at %s." % [safe, room, root])
+
+
+func _sanitize_project_name(name: String) -> String:
+	var safe: String = ""
+	for i in name.length():
+		var ch: String = name[i]
+		var code: int = ch.unicode_at(0)
+		var ok: bool = (code >= 48 and code <= 57) or (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or ch == "." or ch == "_" or ch == "-"
+		if ok:
+			safe += ch
+	safe = safe.strip_edges()
+	while safe.begins_with("."):
+		safe = safe.substr(1)
+	if safe.is_empty():
+		safe = "project"
+	if safe.length() > 64:
+		safe = safe.substr(0, 64)
+	return safe
+
+
+func _mirror_send_fn(room: String) -> Callable:
+	return func(app_bytes: PackedByteArray) -> void:
+		if not _rooms.has(room) or not _app_to_enet.has(CollabRelayProtocol.HOST_APP_ID):
+			return
+		var host_enet: int = int(_app_to_enet[CollabRelayProtocol.HOST_APP_ID])
+		var frame: PackedByteArray = CollabRelayProtocol.encode_data(CollabConstants.MIRROR_PEER_ID, CollabRelayProtocol.HOST_APP_ID, app_bytes)
+		_send_to_enet(host_enet, frame)
+
+
+func _push_mirror_snapshot(room: String, enet_id: int) -> void:
+	if not _mirrors.has(room):
+		return
+	var mirror: CollabProjectMirror = _mirrors[room]
+	if mirror.is_empty():
+		return
+	for frame in mirror.snapshot_frames(CollabRelayProtocol.HOST_APP_ID):
+		_outbox.append({"enet_id": enet_id, "bytes": frame})
+
+
+func _mirror_ingest_frame(room: String, frame: PackedByteArray) -> void:
+	if not _mirrors.has(room):
+		return
+	var decoded: Dictionary = CollabRelayProtocol.decode(frame)
+	if not decoded.get("ok", false) or int(decoded.get("kind", -1)) != CollabRelayProtocol.Kind.DATA:
+		return
+	(_mirrors[room] as CollabProjectMirror).ingest(decoded.get("data", PackedByteArray()))
+
+
+func _room_client_count(room_data: Dictionary) -> int:
+	var members: Dictionary = room_data.get("members", {})
+	return members.size() - (1 if members.has(CollabConstants.MIRROR_PEER_ID) else 0)
 
 
 func _log_info(message: String) -> void:

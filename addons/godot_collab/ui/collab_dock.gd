@@ -20,7 +20,6 @@ signal snapshot_requested()
 signal snapshot_apply_requested()
 signal snapshot_discard_requested()
 signal new_scene_requested(path: String, root_class: String)
-signal add_file_requested(path: String, content: String)
 signal open_scene_requested(path: String)
 signal refresh_scenes_requested()
 signal username_changed(username: String)
@@ -64,13 +63,9 @@ var _scene_list: ItemList
 var _open_scene_button: Button
 var _refresh_scenes_button: Button
 var _new_scene_button: Button
-var _add_file_button: Button
 var _new_scene_dialog: ConfirmationDialog
 var _new_scene_path: LineEdit
 var _new_scene_root: OptionButton
-var _add_file_dialog: ConfirmationDialog
-var _add_file_path: LineEdit
-var _add_file_content: TextEdit
 var _messages: RichTextLabel
 var _requests: Array = [] # [{peer_id, name}]
 var _participants: Array = []
@@ -290,15 +285,10 @@ func _build() -> void:
 	_new_scene_button.tooltip_text = "Ask the host to create a new empty scene in the shared workspace."
 	_new_scene_button.pressed.connect(_on_new_scene_pressed)
 	author_row.add_child(_new_scene_button)
-	_add_file_button = Button.new()
-	_add_file_button.text = "Add file..."
-	_add_file_button.tooltip_text = "Ask the host to add a text file (script/resource) to the shared workspace."
-	_add_file_button.pressed.connect(_on_add_file_pressed)
-	author_row.add_child(_add_file_button)
+
 	workspace_box.add_child(author_row)
 
 	_build_new_scene_dialog()
-	_build_add_file_dialog()
 
 	var messages_box := _section("Messages")
 	_messages = RichTextLabel.new()
@@ -341,34 +331,6 @@ func _build_new_scene_dialog() -> void:
 	_new_scene_dialog.confirmed.connect(_on_new_scene_confirmed)
 	add_child(_new_scene_dialog)
 
-
-func _build_add_file_dialog() -> void:
-	_add_file_dialog = ConfirmationDialog.new()
-	_add_file_dialog.title = "Add a project file"
-	_add_file_dialog.ok_button_text = "Add file"
-	_add_file_dialog.min_size = Vector2(520, 420)
-	var box := VBoxContainer.new()
-	var path_row := HBoxContainer.new()
-	var path_label := Label.new()
-	path_label.text = "Path"
-	path_label.custom_minimum_size = Vector2(72, 0)
-	path_row.add_child(path_label)
-	_add_file_path = LineEdit.new()
-	_add_file_path.placeholder_text = "res://scripts/new_script.gd"
-	_add_file_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	path_row.add_child(_add_file_path)
-	box.add_child(path_row)
-	var content_label := Label.new()
-	content_label.text = "Content"
-	box.add_child(content_label)
-	_add_file_content = TextEdit.new()
-	_add_file_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_add_file_content.custom_minimum_size = Vector2(0, 240)
-	_add_file_content.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	box.add_child(_add_file_content)
-	_add_file_dialog.add_child(box)
-	_add_file_dialog.confirmed.connect(_on_add_file_confirmed)
-	add_child(_add_file_dialog)
 
 
 func _section(title_text: String) -> VBoxContainer:
@@ -548,18 +510,6 @@ func _on_new_scene_confirmed() -> void:
 		push_message("Enter a scene path.", true)
 		return
 	new_scene_requested.emit(path, _new_scene_root.get_item_text(_new_scene_root.selected))
-
-
-func _on_add_file_pressed() -> void:
-	_add_file_dialog.popup_centered(Vector2i(560, 460))
-
-
-func _on_add_file_confirmed() -> void:
-	var path: String = _add_file_path.text.strip_edges()
-	if path.is_empty():
-		push_message("Enter a file path.", true)
-		return
-	add_file_requested.emit(path, _add_file_content.text)
 
 
 func _on_open_scene_pressed() -> void:

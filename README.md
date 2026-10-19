@@ -29,8 +29,11 @@ structured, validated operation protocol.
   collaborate over the internet **without any port forwarding**: the host and
   every client make outbound connections to the relay, which forwards opaque
   packets between them. A relay invitation (`gc2.…`) embeds the relay endpoint,
-  a room, the session token, and the rendezvous URL. The relay never parses or
-  stores scene, file or project data. The Docker image also bundles the short-code
+  a room, the session token, and the rendezvous URL. The relay never interprets
+  application payloads; by default it stores nothing, and when started with
+  `--projects-dir` it keeps a host-authoritative live mirror of the host project
+  (`live_<project>/`) that is replayed to clients that join later. The Docker
+  image also bundles the short-code
   rendezvous service so a host can offer a short code instead. See
   [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 - Optional UPnP UDP port mapping, with honest connectivity reporting

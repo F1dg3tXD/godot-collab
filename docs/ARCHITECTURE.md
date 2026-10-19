@@ -310,14 +310,18 @@ operations are reported to the dock but no longer force a snapshot on their own,
 so a peer's local-only edit (for example an unsupported node type) is never
 silently wiped.
 
-## Workspace authoring (new scenes and added files)
+## Workspace authoring (new scenes and file sync)
 
-In host-workspace mode a collaborator can create a new scene or add a text
-project file (`CollabWorkspaceService`):
+In host-workspace mode the dock offers **New scene...**; every other file a
+collaborator creates (scripts, resources, dropped assets, new scenes saved from
+the editor) is picked up automatically by the source-file watcher described
+below — there is no manual "add file" dialog any more. The underlying request
+API (`request_add_file`) still exists for programmatic use and is what the
+watcher itself uses to upload a new client-side file.
 
-1. The requester validates the path locally with `CollabPathGuard` and a strict
-   extension allow-list (`WRITABLE_EXTENSIONS`) and size cap
-   (`MAX_WORKSPACE_FILE_BYTES = 2 MiB`).
+1. The requester validates the path locally with `CollabPathGuard`, a size cap
+   (`MAX_WORKSPACE_FILE_BYTES = 2 MiB`), and the exclusion policy
+   (`is_source_file`), so any file that is not explicitly excluded may travel.
 2. The host re-validates everything (path traversal / symlink escape, extension,
    size, scene root class against `SCENE_ROOT_CLASSES`, existing-file policy) and
    writes the file **inside the approved project root only**.
@@ -369,13 +373,36 @@ that editing a script on any peer reaches the host and the other peers:
 4. Each receiver writes only inside its project root and refreshes its own
    baseline so the write is not re-detected as a local change.
 
-Eligibility (`is_source_file`) excludes generated/vendor trees — `.godot/`,
-`.git/`, and **`addons/`**. Excluding `addons/` is a safety requirement: the
+Eligibility is an **exclusion policy, not an allow-list**: every file under the
+project root is tracked unless a path segment matches a generated/vendor
+directory (`.godot/`, `.git/`, `.vscode/`, `.idea/`, `.import/`, `android/`) or
+**`addons/`**, or the suffix is temporary junk (`.tmp`, `.swp`, `.swo`,
+`.part`, `.crdownload`). Excluding `addons/` is a safety requirement: the
 add-on's own scripts run inside the editor, and live-editing them mid-session
 can crash the local editor and any client that receives the relayed bytes. The
-dock also shows an explicit warning when a session starts. Watched extensions
-cover scripts, resources, `project.godot`, and binary assets (images, 3D models,
-audio, fonts). `.import` files are deliberately not watched (import churn).
+dock also shows an explicit warning when a session starts. Excluded directories
+are matched **per path segment**, so a nested copy such as `sub/.git/hooks/x.gd`
+is refused as well. Root-level dot-files (`.gitignore`, `.gdignore`,
+`.editorconfig`, `*.uid` sidecars) are watched like any other file.
+
+**Join-time catch-up.** Baselines are primed at session start so pre-existing
+files are not blasted at peers, which means a newly admitted peer would
+otherwise never receive the host's files (and the host would never see files
+only the client has). On admit the host therefore sends a
+`FILE_SYNC_MANIFEST` (path + size + SHA-256 for every tracked file) and then
+pushes `FILE_APPLY` for its own files (capped at 256 files / 64 MiB and at
+`MAX_WORKSPACE_FILE_BYTES` per file). The client replies by uploading only the
+files **missing on the host** (same caps) through the ordinary `WORKSPACE_REQUEST`
+ADD_FILE path. The conflict rule is deliberately one-way per file: the host's
+copy wins and is pushed; a client's copy is uploaded only when the host does not
+have that path. Larger projects can still converge through the full
+project-download flow.
+
+**Saved scenes propagate.** On the host, a scene that is open in the editor is
+still driven by the operation stream, but its *saved file* is now relayed raw
+(receivers protect their own open scenes and keep their op-synced state
+instead), so peers without that scene open — and the server-side relay mirror —
+see the scene content after a save.
 
 **Open scenes are protected.** A scene file (`.tscn`/`.scn`/`.escn`) that is
 currently open in the editor is driven by the operation stream, so
@@ -473,7 +500,39 @@ room code and a token; the first host to register owns the room. The relay:
   peer cannot spoof another peer's identity;
 - emits membership events so `CollabSessionManager` can surface them as the same
   `peer_connected` / `peer_disconnected` signals used in direct mode;
-- never parses application payloads and stores nothing on disk.
+- never interprets application payloads, and by default stores nothing on disk
+  (see the project mirror below).
+
+### Server-side project mirror
+
+When the relay is started with `--projects-dir <dir>` (the Docker image and
+`entrypoint.sh` default this to `tools/relay_server/projects`, controlled by the
+`MIRROR_DIR` environment variable), each room gains a **live, host-authoritative
+mirror** of the host project under `<dir>/live_<project_name>/`:
+
+- The host's room `REGISTER` carries the project name; the relay attaches an
+  internal mirror member with application id `CollabConstants.MIRROR_PEER_ID`
+  (`1000`, far above any ENet peer id) and, on the host's behalf, pulls the
+  project through the ordinary transfer protocol (`CollabProjectMirror`,
+  mirroring `CollabTransferManager`'s request/manifest/chunk/verify flow).
+- The pull is auto-approved on the host side: `CollabTransferManager` skips the
+  join-approval gate for `MIRROR_PEER_ID`, so no user interaction is needed.
+- A later client that registers into the room is replayed the mirror state as
+  ordinary frames: the `SCENE_LIST` plus every mirrored `FILE_APPLY`
+  (`FILE_REMOVE` for deletions), so it starts from the host's copy even though
+  the host's file baseline would otherwise suppress a re-send.
+- Live `FILE_APPLY`/`FILE_REMOVE`/`SCENE_LIST` frames are ingested into the
+  mirror on disk as well, so the mirror tracks saves and edits for the lifetime
+  of the relay.
+- Writes are `CollabPathGuard`-validated under `live_<project_name>/`, the
+  mirror skips anything under `addons/`, and it never executes content. Project
+  names are sanitized (`[A-Za-z0-9_-]`, length-capped) before touching disk.
+- Per-file size is capped at `MAX_WORKSPACE_FILE_BYTES` (2 MiB) and the pull
+  at `MAX_MIRROR_FILES` (20000) entries; larger files are skipped (the mirror is
+  a convenience cache, not a full project backup — the complete snapshot
+  download path still covers the whole project).
+- The relay never applies mirror data back to the host: it is host -> server
+  only, and the host remains authoritative for its own files.
 
 `CollabRelayProtocol` frames relay traffic with a 10-byte `GCRL` header
 (`REGISTER`, `REGISTERED`, `DATA`, `MEMBER_JOIN`, `MEMBER_LEAVE`, `ERROR`,
