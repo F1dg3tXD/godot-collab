@@ -38,7 +38,7 @@ func setup(coordinator: CollabSessionCoordinator, settings: CollabSettings, logs
 		_marker_scene = load(MARKER_SCENE_PATH) as PackedScene
 	_apply_settings()
 	coordinator.session_stopped.connect(_on_session_stopped)
-	coordinator.participants_changed.connect(_reap)
+	coordinator.registry.changed.connect(_reap)
 
 
 func set_viewport_provider(provider: Callable) -> void:

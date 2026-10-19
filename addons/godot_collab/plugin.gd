@@ -18,6 +18,7 @@ var _session_manager: CollabSessionManager
 var _coordinator: CollabSessionCoordinator
 var _presence: CollabPresenceService
 var _markers: CollabMarkerManager
+var _cursor_2d: CollabCursor2DManager
 var _scene_sync: CollabSceneSyncService
 var _save_service: CollabSaveService
 var _workspace: CollabWorkspaceService
@@ -31,6 +32,12 @@ var _toolbar: CollabToolbar
 ## Guards against reacting to the editor's own `scene_saved` signal when the
 ## add-on saves programmatically, which would otherwise recurse.
 var _suppress_save_signal: bool = false
+
+## Guards the shared save so it can never re-enter the editor's save while the
+## editor's "save" progress task is still alive (which raises
+## "Task 'save' already exists.").
+var _save_in_progress: bool = false
+var _save_pending: bool = false
 
 var _attached_scene_id: String = ""
 var _bound_scene_ids: Dictionary = {}
@@ -87,7 +94,6 @@ func _enter_tree() -> void:
 
 	_presence = CollabPresenceService.new()
 	_presence.setup(_coordinator, _settings, _logs)
-	_presence.set_editor_interface_provider(Callable(self, "get_editor_interface"))
 	_presence.set_drag_data_provider(Callable(self, "_drag_data"))
 	add_child(_presence)
 
@@ -95,6 +101,11 @@ func _enter_tree() -> void:
 	_markers.setup(_coordinator, _settings, _logs, _presence.cursor_state)
 	_markers.set_viewport_provider(Callable(self, "_editor_viewport_3d"))
 	add_child(_markers)
+
+	_cursor_2d = CollabCursor2DManager.new()
+	_cursor_2d.setup(_coordinator, _settings, _logs, _presence.cursor_state)
+	_cursor_2d.set_viewport_provider(Callable(self, "_editor_viewport_2d"))
+	add_child(_cursor_2d)
 
 	_scene_sync = CollabSceneSyncService.new()
 	_scene_sync.setup(_coordinator, _logs, editor_callables)
@@ -145,10 +156,9 @@ func _enter_tree() -> void:
 	_build_toolbar()
 	scene_saved.connect(_on_scene_saved)
 
-	# Receive mouse motion even when no 3D control is dragging, and keep
-	# painting overlays every frame so remote cursors stay smooth.
+	# Receive mouse motion over the editor viewports even while no control is
+	# dragging, so the local cursor can be sampled for presence.
 	set_input_event_forwarding_always_enabled()
-	set_force_draw_over_forwarding_enabled()
 
 	if _editor != null:
 		_ensure_scene_binding()
@@ -171,12 +181,13 @@ func _exit_tree() -> void:
 		remove_control_from_docks(_dock)
 		_dock.queue_free()
 		_dock = null
-	for node in [_presence, _markers, _scene_sync, _save_service, _workspace, _transfer, _rendezvous, _coordinator, _session_manager]:
+	for node in [_presence, _markers, _cursor_2d, _scene_sync, _save_service, _workspace, _transfer, _rendezvous, _coordinator, _session_manager]:
 		if node != null and is_instance_valid(node):
 			remove_child(node)
 			node.free()
 	_presence = null
 	_markers = null
+	_cursor_2d = null
 	_scene_sync = null
 	_save_service = null
 	_workspace = null
@@ -198,8 +209,8 @@ func _process(delta: float) -> void:
 	_workspace.poll()
 	_transfer.poll()
 	if _coordinator.session_manager.is_active():
-		update_overlays()
 		_markers.poll()
+		_cursor_2d.poll()
 		_presence.tick_local()
 	# Keep the dock's participant list and connectivity reasonably fresh.
 	if _coordinator.session_manager.is_active() and _times % 15 == 0:
@@ -546,7 +557,21 @@ func _on_kick_requested(peer_id: int) -> void:
 	_coordinator.kick(peer_id)
 
 
+## Requests a shared save. This is always deferred so it never runs inside the
+## editor's own save (the `scene_saved` signal fires while the editor's "save"
+## progress task is still registered; saving again there would raise
+## "Task 'save' already exists."). If a save is already running, coalesce.
 func _on_save_requested() -> void:
+	_deferred_shared_save.call_deferred()
+
+
+func _deferred_shared_save() -> void:
+	if _coordinator == null or not _coordinator.session_manager.is_active():
+		return
+	if _save_in_progress:
+		_save_pending = true
+		return
+	_save_in_progress = true
 	# Persist remote edits applied to scenes the host is not currently viewing
 	# first, then save the focused scene through the editor's own save API.
 	var persisted: int = _scene_sync.persist_host_scenes()
@@ -555,6 +580,10 @@ func _on_save_requested() -> void:
 	_suppress_save_signal = true
 	_save_service.save_now()
 	_suppress_save_signal = false
+	_save_in_progress = false
+	if _save_pending:
+		_save_pending = false
+		_deferred_shared_save.call_deferred()
 
 
 ## Fires whenever the editor saves a scene (for example on the user's Ctrl+S).
@@ -942,6 +971,7 @@ func _ensure_scene_binding() -> void:
 		_attached_scene_id = active_path
 		_presence.set_local_scene_id(active_path)
 		_markers.set_local_scene_id(active_path)
+		_cursor_2d.set_local_scene_id(active_path)
 		if _coordinator.is_host():
 			_coordinator.refresh_host_scene_id()
 		if _coordinator.session_manager.is_active() and active_path != _last_focus_sent:
@@ -1034,9 +1064,3 @@ func _forward_canvas_gui_input(event: InputEvent) -> bool:
 	)
 	_presence.sample_local_cursor_2d(canvas_pos, normalized, _attached_scene_id, motion.button_mask)
 	return false
-
-
-## Paints remote 2D cursors over the 2D editor viewport.
-func _forward_canvas_draw_over_viewport(viewport_control: Control) -> void:
-	if _presence != null:
-		_presence.draw_overlay_2d(viewport_control)

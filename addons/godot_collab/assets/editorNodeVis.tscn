@@ -11,6 +11,8 @@ emission = Color(1, 0, 0, 0.6)
 rim = 0.1
 rim_tint = 0.45
 uv1_triplanar = true
+no_depth_test = true
+render_priority = 100
 
 [sub_resource type="ViewportTexture" id="ViewportTexture_tnv6x"]
 viewport_path = NodePath("usernameUI")
@@ -49,6 +51,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9990418, 0)
 cast_shadow = 0
 billboard = 1
 alpha_cut = 2
+no_depth_test = true
+render_priority = 100
 texture = SubResource("ViewportTexture_tnv6x")
 
 [node name="usernameUI" type="SubViewport" parent="." unique_id=1431948464]
@@ -84,15 +88,7 @@ modulate = Color(1, 0, 0, 1)
 pixel_size = 0.05
 billboard = 1
 texture_filter = 0
+no_depth_test = true
+render_priority = 110
 sprite_frames = ExtResource("2_tnv6x")
 animation = &"idle"
-
-[node name="Cursor2D" type="Node2D" parent="." unique_id=126999757]
-
-[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="Cursor2D" unique_id=911631107]
-unique_name_in_owner = true
-modulate = Color(1, 0, 0, 1)
-texture_filter = 1
-sprite_frames = ExtResource("2_tnv6x")
-animation = &"idle"
-centered = false

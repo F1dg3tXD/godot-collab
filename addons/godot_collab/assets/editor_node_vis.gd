@@ -32,11 +32,8 @@ const VIEWPORT_V_PADDING: float = 12.0
 @onready var _name_sprite: Sprite3D = $UserNameDisplay
 @onready var _cursor_3d: Node3D = $Cursor3D
 
-## Cursors for the actual mouse position
-# 3D
+## Cursor sprite that tracks the remote mouse position.
 @onready var animated_sprite_3d: AnimatedSprite3D = %AnimatedSprite3D
-# 2D
-@onready var animated_sprite_2d: AnimatedSprite2D = %AnimatedSprite2D
 
 func _ready() -> void:
 	# The label must keep rendering even when nothing else changes.
@@ -57,9 +54,6 @@ func _ready() -> void:
 	if animated_sprite_3d != null:
 		animated_sprite_3d.centered = false
 		animated_sprite_3d.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	if animated_sprite_2d != null:
-		animated_sprite_2d.centered = false
-		animated_sprite_2d.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_apply_username()
 	_apply_color()
 
@@ -226,8 +220,6 @@ func _apply_color() -> void:
 	var tint: Color = Color(marker_color.r, marker_color.g, marker_color.b, 1.0)
 	if animated_sprite_3d != null and not animated_sprite_3d.modulate.is_equal_approx(tint):
 		animated_sprite_3d.modulate = tint
-	if animated_sprite_2d != null and not animated_sprite_2d.modulate.is_equal_approx(tint):
-		animated_sprite_2d.modulate = tint
 
 
 func _material_matches(mat: StandardMaterial3D, color: Color) -> bool:

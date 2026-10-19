@@ -3,6 +3,12 @@
 [ext_resource type="SpriteFrames" uid="uid://b2n41ve8frgoh" path="res://addons/godot_collab/assets/cursor_sprites.tres" id="1_cu4ql"]
 [ext_resource type="Script" uid="uid://ck5ms5patck3k" path="res://addons/godot_collab/assets/cursor_2d.gd" id="1_mk70e"]
 
+[sub_resource type="LabelSettings" id="LabelSettings_c2d"]
+font_size = 16
+font_color = Color(1, 0, 0, 1)
+outline_size = 6
+outline_color = Color(0, 0, 0, 1)
+
 [node name="Cursor2D" type="Node2D" unique_id=702463005]
 script = ExtResource("1_mk70e")
 
@@ -13,3 +19,11 @@ texture_filter = 1
 sprite_frames = ExtResource("1_cu4ql")
 animation = &"idle"
 centered = false
+
+[node name="UserNameDisplay" type="Label" parent="." unique_id=1145398053]
+unique_name_in_owner = true
+offset_left = 20.0
+offset_top = 18.0
+offset_right = 240.0
+offset_bottom = 42.0
+label_settings = SubResource("LabelSettings_c2d")

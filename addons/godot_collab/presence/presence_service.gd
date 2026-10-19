@@ -1,14 +1,11 @@
 @tool
 ## Presence service: captures the local cursor (3D viewport or 2D view),
-## throttles/sends it, stores remote cursors and paints the 2D cursors onto the
-## editor's 2D viewport overlay. 3D remote cursors and avatars are visualised by
-## [CollabMarkerManager].
+## throttles/sends it and stores remote cursor state. Remote cursors are
+## visualised by [CollabMarkerManager] (3D) and [CollabCursor2DManager] (2D).
 class_name CollabPresenceService
 extends Node
 
 signal status(text: String)
-
-const CURSOR_FRAMES_PATH: String = "res://addons/godot_collab/assets/cursor_sprites.tres"
 
 ## Mouse buttons that turn the cursor into the "grab" animation.
 const GRAB_MASK: int = (
@@ -23,11 +20,9 @@ var _logs: CollabLog
 var _last_send_ms: int = 0
 var _visible: bool = true
 var _show_labels: bool = true
-var _cursor_2d_scale: float = 1.0
 var _local_scene_id: String = ""
 var _local_has_cursor: bool = false
 var _local_world: Vector3 = Vector3.ZERO
-var _font: Font = null
 
 # Local 3D capture.
 var _camera: Camera3D = null
@@ -44,7 +39,6 @@ var _last_motion_ms: int = 0
 var _button_mask: int = 0
 
 var _drag_data_provider: Callable = Callable()
-var _cursor_frames: SpriteFrames = null
 
 
 func _init() -> void:
@@ -58,16 +52,12 @@ func setup(coordinator: CollabSessionCoordinator, settings: CollabSettings, logs
 	_apply_settings()
 	coordinator.cursor_received.connect(_on_remote_cursor)
 	coordinator.session_stopped.connect(_on_session_stopped)
-	if _font == null:
-		_font = ThemeDB.fallback_font
 
 
 func _apply_settings() -> void:
 	if _settings == null:
 		return
 	_show_labels = _settings.get_bool(CollabSettings.KEY_CURSOR_LABEL_KEY, true)
-	var size: float = _settings.get_float(CollabSettings.KEY_CURSOR_SIZE_KEY, 8.0)
-	_cursor_2d_scale = clampf(size / 8.0, 0.25, 8.0)
 	cursor_state.set_marker_depth(_settings.get_float(CollabSettings.KEY_CURSOR_DEPTH_KEY, 12.0))
 
 
@@ -81,10 +71,6 @@ func set_visible(visible: bool) -> void:
 
 func set_show_labels(show: bool) -> void:
 	_show_labels = show
-
-
-func set_marker_size(size: float) -> void:
-	_cursor_2d_scale = clampf(size / 8.0, 0.25, 8.0)
 
 
 func set_marker_depth(depth: float) -> void:
@@ -154,9 +140,27 @@ func tick_local() -> void:
 		_last_send_ms = now
 
 
+## Re-reads the live pointer position from the 3D viewport. Motion events stop
+## arriving while the editor is running a drag-and-drop (for example dragging a
+## file that cannot be placed), which would otherwise freeze the remote cursor.
+## Sampling the viewport directly keeps it following the mouse. Positions outside
+## the viewport are ignored so the cursor never jumps when the pointer leaves it.
+func _refresh_pointer() -> void:
+	if _camera == null or not is_instance_valid(_camera):
+		return
+	var viewport: Viewport = _camera.get_viewport()
+	if viewport == null:
+		return
+	var pos: Vector2 = viewport.get_mouse_position()
+	if pos.x < 0.0 or pos.y < 0.0 or pos.x > _viewport_size.x or pos.y > _viewport_size.y:
+		return
+	_mouse_pos = pos
+
+
 func _send_3d(now: int) -> bool:
 	if _camera == null or not is_instance_valid(_camera):
 		return false
+	_refresh_pointer()
 	var origin: Vector3 = _camera.project_ray_origin(_mouse_pos)
 	var direction: Vector3 = _camera.project_ray_normal(_mouse_pos)
 	var normalized: Vector2 = Vector2(
@@ -286,87 +290,3 @@ func _on_session_stopped(_reason: String) -> void:
 	cursor_state.clear()
 	_local_has_cursor = false
 	_camera = null
-
-
-# --- drawing --------------------------------------------------------------
-
-## Paints remote 2D cursors onto the 2D viewport overlay. [param overlay] is the
-## control provided by EditorPlugin._forward_canvas_draw_over_viewport.
-func draw_overlay_2d(overlay: Control) -> void:
-	if not _visible or _coordinator == null or not _coordinator.session_manager.is_active():
-		return
-	var viewport_2d: SubViewport = _editor_viewport_2d()
-	if viewport_2d == null or overlay == null:
-		return
-	var canvas_transform: Transform2D = viewport_2d.get_canvas_transform()
-	var now: int = Time.get_ticks_msec()
-	for participant in _coordinator.registry.all():
-		var peer_id: int = participant.peer_id
-		if peer_id == _coordinator.local_peer_id():
-			continue
-		if not cursor_state.has(peer_id) or cursor_state.is_stale(peer_id, now):
-			continue
-		if cursor_state.view(peer_id) != CollabConstants.CURSOR_VIEW_2D:
-			continue
-		var remote_scene: String = cursor_state.scene_id(peer_id)
-		if not remote_scene.is_empty() and not _local_scene_id.is_empty() and remote_scene != _local_scene_id:
-			continue
-		var screen: Vector2 = canvas_transform * cursor_state.canvas_pos(peer_id)
-		if screen.x < 0.0 or screen.y < 0.0 or screen.x > overlay.size.x or screen.y > overlay.size.y:
-			continue
-		_draw_cursor_2d(overlay, screen, cursor_state.anim(peer_id), participant.color(), participant.display_name(), now)
-
-
-func _draw_cursor_2d(overlay: Control, screen: Vector2, anim: String, color: Color, label: String, now: int) -> void:
-	var tint: Color = Color(color.r, color.g, color.b, 1.0)
-	var texture: Texture2D = _cursor_texture(anim, now)
-	if texture != null:
-		var size: Vector2 = texture.get_size() * _cursor_2d_scale
-		overlay.draw_texture_rect(texture, Rect2(screen, size), false, tint)
-	else:
-		# Fallback crosshair if the sprite sheet is unavailable.
-		overlay.draw_line(screen + Vector2(-6.0, 0.0), screen + Vector2(6.0, 0.0), tint, 1.0)
-		overlay.draw_line(screen + Vector2(0.0, -6.0), screen + Vector2(0.0, 6.0), tint, 1.0)
-	if _show_labels and _font != null:
-		overlay.draw_string(_font, screen + Vector2(8.0, 24.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, tint)
-
-
-func _cursor_texture(anim: String, now: int) -> Texture2D:
-	if _cursor_frames == null:
-		_cursor_frames = load(CURSOR_FRAMES_PATH) as SpriteFrames
-	if _cursor_frames == null:
-		return null
-	var name: String = anim
-	if not _cursor_frames.has_animation(StringName(name)):
-		name = CollabConstants.CURSOR_ANIM_IDLE
-	if not _cursor_frames.has_animation(StringName(name)):
-		return null
-	var key: StringName = StringName(name)
-	var count: int = _cursor_frames.get_frame_count(key)
-	if count <= 0:
-		return null
-	var frame: int = 0
-	var speed: float = _cursor_frames.get_animation_speed(key)
-	if count > 1 and speed > 0.0:
-		frame = int(floor((float(now) / 1000.0) * speed)) % count
-	return _cursor_frames.get_frame_texture(key, frame)
-
-
-func _editor_viewport_2d() -> SubViewport:
-	var editor_interface: EditorInterface = _get_editor_interface()
-	if editor_interface == null:
-		return null
-	return editor_interface.get_editor_viewport_2d() as SubViewport
-
-
-var _editor_interface_provider: Callable = Callable()
-
-
-func set_editor_interface_provider(provider: Callable) -> void:
-	_editor_interface_provider = provider
-
-
-func _get_editor_interface() -> EditorInterface:
-	if _editor_interface_provider.is_valid():
-		return _editor_interface_provider.call()
-	return null

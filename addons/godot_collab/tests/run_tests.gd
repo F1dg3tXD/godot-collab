@@ -273,6 +273,7 @@ func _init() -> void:
 	_test_multi_scene_isolation()
 	_test_cursor_state()
 	_test_marker_manager()
+	_test_cursor_2d_manager()
 	# The marker test needs a live frame so the node's ready/deferred calls run.
 	_run_marker_test_then_finish()
 
@@ -745,6 +746,57 @@ func _test_marker_manager() -> void:
 	manager_node.free()
 
 
+func _test_cursor_2d_manager() -> void:
+	print("[cursor 2d manager]")
+	var logs := CollabLog.new()
+	var viewport := SubViewport.new()
+	root.add_child(viewport)
+
+	var manager_node := CollabSessionManager.new(logs)
+	var coordinator := CollabSessionCoordinator.new()
+	coordinator.setup(manager_node, logs)
+	coordinator.get_project_id = func() -> String: return "proj"
+	coordinator.get_scene_id = func() -> String: return "res://scene.tscn"
+	coordinator.get_username = func() -> String: return "host"
+
+	var state := CollabCursorState.new()
+	var cursors := CollabCursor2DManager.new()
+	cursors.setup(coordinator, CollabSettings.new(), logs, state)
+	cursors.set_viewport_provider(func() -> SubViewport: return viewport)
+	root.add_child(cursors)
+
+	var err: Error = coordinator.start_host(45981, 4, CollabConstants.WorkspaceMode.HOST_WORKSPACE, false)
+	_check(err == OK, "cursor 2D host starts (%s)" % error_string(err))
+	coordinator.registry.upsert(CollabParticipant.make(2, "Bob", false, true))
+	cursors.set_local_scene_id("res://scene.tscn")
+
+	state.update_2d(2, Vector2(40.0, 50.0), Vector2(0.5, 0.5), "res://scene.tscn", CollabConstants.CURSOR_ANIM_GRAB)
+	cursors.poll()
+	_check(cursors.has_cursor(2), "a cursor is created for a remote 2D sample")
+	_check(cursors.cursor_count() == 1, "exactly one 2D cursor per remote peer")
+	var created: Node = viewport.get_node_or_null("CollabCursor2D/CollabPeer_2")
+	_check(created != null, "2D cursor is parented into the editor 2D viewport container")
+	if created is CollabCursor2D:
+		var cursor: CollabCursor2D = created as CollabCursor2D
+		_check(cursor.position.is_equal_approx(Vector2(40.0, 50.0)), "2D cursor sits at the remote canvas position")
+		_check(cursor.cursor_animation() == &"grab", "remote animation is applied to the 2D cursor")
+		_check(cursor.username == "Bob", "remote username is applied to the 2D cursor")
+
+	state.update_2d(2, Vector2(10.0, 20.0), Vector2(0.5, 0.5), "res://other.tscn")
+	cursors.poll()
+	_check(not cursors.has_cursor(2), "2D cursor hidden when the peer is editing another scene")
+
+	state.update(2, Transform3D.IDENTITY, Vector3.ZERO, Vector3.FORWARD, Vector2(0.5, 0.5), "res://scene.tscn")
+	cursors.poll()
+	_check(not cursors.has_cursor(2), "no 2D cursor while the peer is in the 3D view")
+
+	coordinator.stop("cleanup")
+	cursors.free()
+	viewport.free()
+	coordinator.free()
+	manager_node.free()
+
+
 func _test_marker_visuals() -> void:
 	print("[marker visuals]")
 	var packed: PackedScene = load("res://addons/godot_collab/assets/editorNodeVis.tscn") as PackedScene
@@ -763,7 +815,6 @@ func _test_marker_visuals() -> void:
 	_check(label != null, "marker exposes its username label")
 	_check(sphere != null, "marker exposes its sphere")
 	_check(marker.animated_sprite_3d != null, "marker exposes its 3D cursor sprite")
-	_check(marker.animated_sprite_2d != null, "marker exposes its 2D cursor sprite")
 	if marker.animated_sprite_3d != null:
 		_check(marker.animated_sprite_3d.sprite_frames != null, "cursor sprite has the shared SpriteFrames")
 	# Unknown animation names are ignored rather than crashing.
