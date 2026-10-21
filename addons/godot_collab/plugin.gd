@@ -39,6 +39,10 @@ var _suppress_save_signal: bool = false
 var _save_in_progress: bool = false
 var _save_pending: bool = false
 
+## Set when a shared save is queued. The save runs from [method _process] so it
+## never executes while the editor flushes its message queue.
+var _save_requested: bool = false
+
 var _attached_scene_id: String = ""
 var _bound_scene_ids: Dictionary = {}
 var _last_focus_sent: String = ""
@@ -212,6 +216,11 @@ func _process(delta: float) -> void:
 		_markers.poll()
 		_cursor_2d.poll()
 		_presence.tick_local()
+	# Shared saves run here, outside the message-queue flush, so the editor's
+	# "save" progress task can be created without engine errors.
+	if _save_requested:
+		_save_requested = false
+		_run_shared_save()
 	# Keep the dock's participant list and connectivity reasonably fresh.
 	if _coordinator.session_manager.is_active() and _times % 15 == 0:
 		_dock.set_participants(_coordinator.registry.all())
@@ -556,15 +565,20 @@ func _on_kick_requested(peer_id: int) -> void:
 	_coordinator.kick(peer_id)
 
 
-## Requests a shared save. This is always deferred so it never runs inside the
-## editor's own save (the `scene_saved` signal fires while the editor's "save"
-## progress task is still registered; saving again there would raise
-## "Task 'save' already exists."). If a save is already running, coalesce.
+## Requests a shared save. The save is queued and executed from [method _process]:
+## the editor's own save creates a blocking progress task, and Godot refuses to
+## create one while the message queue is flushing, which is exactly what a
+## `call_deferred()` callback does ("Do not use progress dialog (task) while
+## flushing the message queue or using call_deferred()!"). Running it from
+## `_process` also keeps it out of the editor's own save, whose `scene_saved`
+## signal fires while the "save" progress task is still registered (saving
+## again there would raise "Task 'save' already exists.").
 func _on_save_requested() -> void:
-	_deferred_shared_save.call_deferred()
+	_save_requested = true
 
 
-func _deferred_shared_save() -> void:
+## Performs the queued shared save. Only called from [method _process].
+func _run_shared_save() -> void:
 	if _coordinator == null or not _coordinator.session_manager.is_active():
 		return
 	if _save_in_progress:
@@ -582,7 +596,7 @@ func _deferred_shared_save() -> void:
 	_save_in_progress = false
 	if _save_pending:
 		_save_pending = false
-		_deferred_shared_save.call_deferred()
+		_save_requested = true
 
 
 ## Fires whenever the editor saves a scene (for example on the user's Ctrl+S).

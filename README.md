@@ -148,6 +148,20 @@ docker build -f tools/relay_server/Dockerfile -t godot-collab-relay:4.7.2 .
 docker run --rm -p 45900:45900/udp -p 9080:9080/tcp godot-collab-relay:4.7.2
 ```
 
+To keep the relay's optional live project mirror (`live_<project>/`) visible on
+the host, bind-mount the mirror directory — without it the image's `VOLUME`
+declaration creates an anonymous volume whose contents are invisible outside
+the container and are lost when it is recreated:
+
+```
+docker run --rm -p 45900:45900/udp -p 9080:9080/tcp \
+  -v /srv/collab/projects:/relay/tools/relay_server/projects \
+  godot-collab-relay:4.7.2
+```
+
+`tools/relay_server/docker-compose.yml` does this already (host side
+overridable with `COLLAB_MIRROR_DIR`).
+
 Then, in the dock, make sure **Use a relay server** is ticked, enter the relay's
 address (`host` or `host:port`), and click **Host**. Share the generated `gc2.…`
 invitation code; joining clients decode the relay endpoint, room, and rendezvous

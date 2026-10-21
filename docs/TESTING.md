@@ -13,7 +13,7 @@ cd /path/to/godot-colab
 - Exit code `0` and a final `RESULT: PASS` mean all checks passed.
 - Exit code `1` with `RESULT: FAIL` means at least one check failed; each failure
   is printed individually.
-- The suite (currently **327 checks**) covers: protocol framing/validation (bad
+- The suite (currently **336 checks**) covers: protocol framing/validation (bad
   magic, truncated packets, oversized payloads, non-dictionary payloads, the
   `CURSOR_UPDATE` `3d`/`2d` view shapes, and the
   workspace message types `WORKSPACE_REQUEST`/`WORKSPACE_RESULT`/`FILE_APPLY`/
@@ -70,7 +70,9 @@ cd /path/to/godot-colab
   by `_test_workspace_rename_delete_loopback` (rename/delete propagation),
   `_test_workspace_join_catchup` (a peer admitted after files exist receives the
   host's files and the host receives the client's extra file via
-  `FILE_SYNC_MANIFEST`), and `_test_relay_project_mirror` (a relay started with
+  `FILE_SYNC_MANIFEST`), `_test_workspace_relay_sync` (the same convergence over
+  a relay: join-time catch-up in both directions plus a live host→client and
+  client→host file add), and `_test_relay_project_mirror` (a relay started with
   `--projects-dir` pulls the host project into `live_<project>/`, persists live
   file adds there, and replays the mirror to a client that joins later).
 
@@ -246,6 +248,22 @@ instances, enable **Godot Collab** in each, and run through the checks:
     fills with the host's files; after the client joins, confirm its own
     non-shared file appears on the host and in the mirror. Leave the mirror
     option off to run the relay stateless (the default).
+
+    The relay logs the resolved mirror directory on startup
+    (`Relay project mirrors are written to <path>`); if that line is missing or
+    the directory stays empty, the mirror is disabled or pointed somewhere else.
+
+    In Docker, the mirror directory must be **bind-mounted**, otherwise the
+    image's `VOLUME` declaration creates an anonymous volume: the mirrored
+    projects are then invisible on the host and are lost when the container is
+    recreated. `docker-compose.yml` already bind-mounts it (override the host
+    side with `COLLAB_MIRROR_DIR=/srv/collab/projects`):
+
+    ```sh
+    docker compose -f tools/relay_server/docker-compose.yml up -d --build
+    docker compose -f tools/relay_server/docker-compose.yml logs relay
+    ls tools/relay_server/projects          # live_<project_name>/ must appear here
+    ```
 
     (`run.sh` builds the GDScript class cache on first run; on a fresh checkout
     the plain `godot --headless --script ...` form fails with

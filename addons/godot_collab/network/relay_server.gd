@@ -71,6 +71,10 @@ func start(port: int, max_clients: int = DEFAULT_MAX_CLIENTS, bind_address: Stri
 	_peer = peer
 	_running = true
 	_log_info("Relay listening on UDP %d (max %d clients)." % [port, max_clients])
+	if _projects_dir.is_empty():
+		_log_info("Relay project mirroring is disabled.")
+	else:
+		_log_info("Relay project mirrors are written to %s." % _projects_dir)
 	status.emit("Relay listening on UDP %d." % port)
 	return OK
 

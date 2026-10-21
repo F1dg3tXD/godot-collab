@@ -51,6 +51,10 @@ func _init() -> void:
 		printerr("Relay failed to start on UDP %d: %s" % [port, error_string(err)])
 		quit(1)
 		return
+	if projects_dir.is_empty():
+		_logs.info("Relay mirroring disabled.")
+	else:
+		_logs.info("Relay mirroring live projects into %s." % ProjectSettings.globalize_path(projects_dir))
 	_logs.info("Godot Collab relay running. Press Ctrl+C to stop.")
 
 

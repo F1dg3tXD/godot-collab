@@ -27,7 +27,9 @@ are listed explicitly so nothing here is mistaken for working functionality.
   relay, token rejection, host departure), plus a **workspace join-time
   catch-up** flow (`FILE_SYNC_MANIFEST`) and a **relay project mirror** flow
   (relay pulls the host project into `live_<project>/` and replays it to a
-  later-joining client). It passes (see [`TESTING.md`](TESTING.md)).
+  later-joining client), plus a **relay workspace sync** flow (join-time
+  catch-up and live file adds in both directions through a relay). It passes
+  (see [`TESTING.md`](TESTING.md)).
 - The interactive editor behaviours (dock UI, top-toolbar buttons, remote cursor
   drawing, `_forward_3d_gui_input` / `_forward_canvas_gui_input` /
   `_forward_canvas_draw_over_viewport`, scene
@@ -56,6 +58,11 @@ are listed explicitly so nothing here is mistaken for working functionality.
   content beyond `MAX_MIRROR_FILES` (20000) / the pull caps are not mirrored;
   the mirror is a convenience cache for late joiners, not a backup or the
   authoritative project copy. Nothing is ever mirrored back onto the host.
+  In Docker the mirror directory must be **bind-mounted**; without it the
+  image's `VOLUME` declaration creates an anonymous volume, so the mirrored
+  projects are invisible on the host and are lost when the container is
+  recreated (`docker-compose.yml` bind-mounts it by default). The relay logs
+  the resolved mirror directory on startup.
 - **After a relay or direct connection is established, there is no relay
   fallback.** If the relay process stops or the host leaves, clients are
   disconnected; there is no automatic reconnection or migration.

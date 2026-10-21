@@ -288,6 +288,15 @@ forwarded as `SAVE_REQUEST`, and the host answers through
 re-triggering the signal. Git presence mode is ignored, so Ctrl+S stays purely
 local there.
 
+**Scheduling.** A shared save is queued (`_save_requested`) and executed from
+`EditorPlugin._process`, never from a `call_deferred()` callback. Godot's scene
+save creates a *blocking* progress task, and the engine refuses to create one
+while the message queue is flushing ("Do not use progress dialog (task) while
+flushing the message queue or using call_deferred()!"), which a deferred
+callback always is. Running the save from `_process` also keeps it outside the
+editor's own save, whose `scene_saved` signal fires while the "save" progress
+task is still registered.
+
 ### Resynchronization
 
 The host pushes a snapshot of the current edited scene to a peer as soon as it

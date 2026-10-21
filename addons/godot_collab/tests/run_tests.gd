@@ -278,6 +278,7 @@ func _init() -> void:
 	_test_general_property_sync()
 	_test_workspace_rename_delete_loopback()
 	_test_workspace_join_catchup()
+	_test_workspace_relay_sync()
 	_test_relay_project_mirror()
 	_test_rejoin_desync()
 	_test_multi_scene_isolation()
@@ -1652,6 +1653,141 @@ func _test_workspace_join_catchup() -> void:
 	host.free()
 	client_manager.free()
 	host_manager.free()
+
+
+## File sync must work through the relay as well: the join-time catch-up and
+## the live file stream are relayed frames, so a client that only has an
+## outbound connection still converges with the host's project.
+func _test_workspace_relay_sync() -> void:
+	print("[workspace relay sync]")
+	var logs := CollabLog.new()
+	var relay_port: int = 45987
+	var room: String = "RLWS77"
+	var token: String = "secret-token"
+
+	var host_root: String = "/tmp/opencode/wsrelay_host"
+	var client_root: String = "/tmp/opencode/wsrelay_client"
+	_reset_dir(host_root)
+	_reset_dir(client_root)
+	_write_text(host_root.path_join("project.godot"), "config_version=5\n")
+	_write_text(host_root.path_join("scripts/host_only.gd"), "extends Node\n")
+	_write_text(client_root.path_join("extra/client_only.gd"), "extends Node\n")
+
+	var relay := CollabRelayServer.new(logs)
+	_check(relay.start(relay_port, 16) == OK, "relay workspace relay starts")
+
+	var host_manager := CollabSessionManager.new(logs)
+	var host := CollabSessionCoordinator.new()
+	host.setup(host_manager, logs)
+	host.get_project_id = func() -> String: return "proj"
+	host.get_scene_id = func() -> String: return "res://w.tscn"
+	host.get_username = func() -> String: return "host"
+	var client_manager := CollabSessionManager.new(logs)
+	var client := CollabSessionCoordinator.new()
+	client.setup(client_manager, logs)
+	client.get_project_id = func() -> String: return "proj"
+	client.get_scene_id = func() -> String: return "res://w.tscn"
+	client.get_username = func() -> String: return "peer"
+
+	var host_ws := CollabWorkspaceService.new()
+	host_ws.setup(host, CollabSettings.new(), logs, func() -> String: return host_root, {})
+	var client_ws := CollabWorkspaceService.new()
+	client_ws.setup(client, CollabSettings.new(), logs, func() -> String: return client_root, {})
+	host_ws.file_sync_enabled = true
+	client_ws.file_sync_enabled = true
+
+	var err: Error = host.start_host_via_relay("127.0.0.1", relay_port, room, token, 4, CollabConstants.WorkspaceMode.HOST_WORKSPACE, false)
+	_check(err == OK, "relay workspace host starts (%s)" % error_string(err))
+	err = client.join_via_relay("127.0.0.1", relay_port, room, token, CollabConstants.WorkspaceMode.HOST_WORKSPACE)
+	_check(err == OK, "relay workspace client joins (%s)" % error_string(err))
+
+	var connected: bool = false
+	var deadline: int = Time.get_ticks_msec() + 8000
+	while Time.get_ticks_msec() < deadline:
+		relay.poll()
+		host.poll()
+		client.poll()
+		host_ws.poll()
+		client_ws.poll()
+		if host.registry.count() >= 2 and client.registry.count() >= 2:
+			connected = true
+			break
+		OS.delay_msec(5)
+	_check(connected, "relay workspace peers connected")
+	if not connected:
+		relay.stop()
+		relay.free()
+		client_ws.free()
+		host_ws.free()
+		client.free()
+		host.free()
+		client_manager.free()
+		host_manager.free()
+		return
+
+	# The join-time catch-up travels through the relay in both directions.
+	host_ws.prime_file_baseline()
+	client_ws.prime_file_baseline()
+	var host_script: String = client_root.path_join("scripts/host_only.gd")
+	var client_script: String = host_root.path_join("extra/client_only.gd")
+	var caught_up: bool = false
+	deadline = Time.get_ticks_msec() + 12000
+	while Time.get_ticks_msec() < deadline:
+		relay.poll()
+		host.poll()
+		client.poll()
+		host_ws.poll()
+		client_ws.poll()
+		if FileAccess.file_exists(host_script) and FileAccess.file_exists(client_script):
+			caught_up = true
+			break
+		OS.delay_msec(5)
+	_check(FileAccess.file_exists(host_script), "relay client received a pre-existing host file at join")
+	_check(FileAccess.file_exists(client_script), "relay host received a pre-existing client-only file at join")
+	_check(caught_up, "relay join-time catch-up converged both projects")
+
+	# A live host-side add must reach the client through the relay.
+	_write_text(host_root.path_join("scripts/live_from_host.gd"), "extends Node\n")
+	var live_host: bool = false
+	deadline = Time.get_ticks_msec() + 12000
+	while Time.get_ticks_msec() < deadline:
+		relay.poll()
+		host.poll()
+		client.poll()
+		host_ws.poll()
+		client_ws.poll()
+		if FileAccess.file_exists(client_root.path_join("scripts/live_from_host.gd")):
+			live_host = true
+			break
+		OS.delay_msec(5)
+	_check(live_host, "live host file reached the client through the relay")
+
+	# A live client-side add must reach the host through the relay.
+	_write_text(client_root.path_join("scripts/live_from_client.gd"), "extends Node\n")
+	var live_client: bool = false
+	deadline = Time.get_ticks_msec() + 12000
+	while Time.get_ticks_msec() < deadline:
+		relay.poll()
+		host.poll()
+		client.poll()
+		host_ws.poll()
+		client_ws.poll()
+		if FileAccess.file_exists(host_root.path_join("scripts/live_from_client.gd")):
+			live_client = true
+			break
+		OS.delay_msec(5)
+	_check(live_client, "live client file reached the host through the relay")
+
+	client_ws.free()
+	host_ws.free()
+	client.stop("cleanup")
+	host.stop("cleanup")
+	client.free()
+	host.free()
+	client_manager.free()
+	host_manager.free()
+	relay.stop()
+	relay.free()
 
 
 ## The relay mirrors the host's live project under the configured projects

@@ -9,7 +9,15 @@ services:
     environment:
       RELAY_PORT: "45900"
       RENDEZVOUS_PORT: "9080"
+      # Where the relay keeps the host-authoritative live project mirrors.
+      MIRROR_DIR: "/relay/tools/relay_server/projects"
     ports:
       - "45900:45900/udp"
       - "9080:9080/tcp"
+    volumes:
+      # The mirror directory must be bind-mounted, otherwise the image's VOLUME
+      # declaration creates an anonymous volume: the mirrored projects are then
+      # invisible on the host and are lost when the container is recreated.
+      # Override the host side with COLLAB_MIRROR_DIR=/srv/collab/projects.
+      - "${COLLAB_MIRROR_DIR:-./projects}:/relay/tools/relay_server/projects"
     restart: unless-stopped

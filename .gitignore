@@ -9,3 +9,7 @@ __pycache__/
 # Aseprite / art source files (not part of the add-on runtime)
 /src/
 
+# Relay project mirrors (runtime data written by the relay server)
+/tools/relay_server/projects/*
+!/tools/relay_server/projects/.gitkeep
+

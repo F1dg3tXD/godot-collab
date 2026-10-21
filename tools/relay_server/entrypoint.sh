@@ -22,8 +22,24 @@ mkdir -p "$MIRROR_DIR"
 
 relay_args=("$@")
 if [ "${#relay_args[@]}" -eq 0 ]; then
-    relay_args=(--port "$RELAY_PORT" --max-clients "$RELAY_MAX_CLIENTS" --bind "$RELAY_BIND" --projects-dir "$MIRROR_DIR")
+    relay_args=(--port "$RELAY_PORT" --max-clients "$RELAY_MAX_CLIENTS" --bind "$RELAY_BIND")
 fi
+
+# Always point the relay at the mirror directory unless the caller passed
+# --projects-dir explicitly. Without this the mirror silently falls back to the
+# image default, which lives on the anonymous volume and stays invisible.
+has_projects_dir=0
+for arg in "${relay_args[@]}"; do
+    if [ "$arg" = "--projects-dir" ]; then
+        has_projects_dir=1
+    fi
+done
+if [ "$has_projects_dir" -eq 0 ]; then
+    relay_args+=(--projects-dir "$MIRROR_DIR")
+fi
+
+echo "Godot Collab relay: mirror directory $MIRROR_DIR"
+echo "Godot Collab relay: arguments ${relay_args[*]}"
 
 godot --headless --script tools/relay_server/relay_server.gd -- "${relay_args[@]}" &
 relay_pid=$!

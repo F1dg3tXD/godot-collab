@@ -41,7 +41,7 @@ changes; keep them in sync when behavior changes.
 - All eight original milestones (plugin foundation, ENet session layer, invite
   codes/connectivity, remote cursors/presence, collaborative scene protocol,
   saving, project download, Git presence mode) are implemented and documented.
-- The headless test suite passes: **327 checks, 0 failures**.
+- The headless test suite passes: **336 checks, 0 failures**.
 - Full project file sync (exclusion-policy eligibility, rename/delete, and
   join-time `FILE_SYNC_MANIFEST` catch-up) and the relay's optional
   server-side project mirror are implemented; both are covered by the suite.
@@ -313,7 +313,7 @@ Headless parse smoke (should print nothing):
   | grep -iE "SCRIPT ERROR|Parse Error|Compile Error|Failed to load"
 ```
 
-Headless test suite (expect `327 checks, 0 failures` / `RESULT: PASS`):
+Headless test suite (expect `336 checks, 0 failures` / `RESULT: PASS`):
 
 ```sh
 ~/.apps/Godot/Godot_v4.7.2-stable_linux.x86_64 --headless \
@@ -341,6 +341,12 @@ Docker (relay UDP 45900 + rendezvous TCP 9080):
 docker build -f tools/relay_server/Dockerfile -t godot-collab-relay:4.7.2 .
 docker run --rm -p 45900:45900/udp -p 9080:9080/tcp godot-collab-relay:4.7.2
 ```
+
+The relay's optional project mirror (`live_<project>/`) must be bind-mounted
+(`-v /srv/collab/projects:/relay/tools/relay_server/projects`, already done by
+`tools/relay_server/docker-compose.yml`); the image's `VOLUME` declaration
+otherwise creates an anonymous volume that is invisible on the host and lost on
+container recreation. The relay logs the resolved mirror directory at startup.
 
 Two-editor GUI behaviors (dock, toolbar, cursor drawing, shared save, download,
 approval) are **not** covered by the headless suite; the reproducible manual
