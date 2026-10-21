@@ -12,3 +12,4 @@ material = ExtResource("1_myinc")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.109326124, 0, 0)
 operation = 2
 size = Vector3(1.0186523, 0.8, 0.8)
+material = ExtResource("1_myinc")
