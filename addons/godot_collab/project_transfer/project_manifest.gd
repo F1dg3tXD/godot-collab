@@ -10,8 +10,10 @@ extends RefCounted
 ## Directory names (relative to the project root) that are never transferred.
 const EXCLUDED_DIRS: Array[String] = [".godot", ".git", "android", ".vscode", ".idea", ".import"]
 
-## File suffixes that are never transferred.
-const EXCLUDED_SUFFIXES: Array[String] = [".tmp", ".translation", ".log"]
+## File suffixes that are never transferred. Generated import metadata is
+## machine-local: the receiving editor rebuilds it when it imports the source
+## asset, and a foreign copy only produces failed-import state.
+const EXCLUDED_SUFFIXES: Array[String] = [".tmp", ".translation", ".log", ".import"]
 
 ## Hard cap on the number of files in one manifest.
 const MAX_FILES: int = 20000

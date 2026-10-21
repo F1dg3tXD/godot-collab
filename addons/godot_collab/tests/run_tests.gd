@@ -140,7 +140,10 @@ func _test_filesync_paths() -> void:
 	print("[file sync paths]")
 	_check(CollabWorkspaceService.is_source_file("scripts/player.gd"), "gd source file watched")
 	_check(CollabWorkspaceService.is_source_file("materials/sky.tres"), "tres resource watched")
-	_check(CollabWorkspaceService.is_source_file("project.godot"), "project.godot watched")
+	# project.godot is synchronised as editor state, never as a file, so a
+	# client's own project file is never replaced by the host's copy.
+	_check(not CollabWorkspaceService.is_source_file("project.godot"), "project.godot excluded from raw file sync")
+	_check(CollabWorkspaceService.is_source_file("export_presets.cfg"), "export presets still watched")
 	_check(CollabWorkspaceService.is_source_file("shaders/thing.gdshader"), "shader watched")
 	# The add-on's own files are never relayed: live-editing an active add-on can
 	# crash a client and corrupt its project copy.
@@ -154,12 +157,17 @@ func _test_filesync_paths() -> void:
 	# A dropped scene travels as a file unless it is open (protected separately).
 	_check(CollabWorkspaceService.is_source_file("scenes/main.tscn"), "tscn tracked for drop-sync")
 	_check(not CollabWorkspaceService.is_source_file("../escape.gd"), "traversal excluded")
-	# Full-filesystem sync: everything that is not explicitly excluded is
-	# watched, including dot-files at the root and uncommon extensions.
-	_check(CollabWorkspaceService.is_source_file(".gitignore"), "root .gitignore is watched")
-	_check(CollabWorkspaceService.is_source_file("scripts/player.gd.uid"), "uid sidecars are watched")
-	_check(CollabWorkspaceService.is_source_file("data/table.yaml"), "arbitrary extensions are watched")
+	# Only files the editor can represent travel. Unknown/absent extensions have
+	# no loader, so a peer would only ever see them as failed imports; generated
+	# .import metadata is machine-local and is rebuilt by each editor.
+	_check(not CollabWorkspaceService.is_source_file("LICENSE"), "extensionless files excluded")
+	_check(not CollabWorkspaceService.is_source_file("docs/README"), "extensionless doc excluded")
+	_check(not CollabWorkspaceService.is_source_file("icon.png.import"), "generated import metadata excluded")
 	_check(not CollabWorkspaceService.is_source_file("data/dump.tmp"), "temporary junk excluded")
+	_check(CollabWorkspaceService.is_source_file("scripts/player.gd.uid"), "uid sidecars still watched")
+	_check(CollabWorkspaceService.is_source_file("data/table.yaml"), "editor text extensions watched")
+	_check(CollabWorkspaceService.is_source_file("notes/todo.md"), "markdown watched")
+	_check(not CollabWorkspaceService.is_source_file("data/unknown.xyzzy"), "unknown extensions excluded")
 	_check(not CollabWorkspaceService.is_source_file("sub/.git/hooks/x.gd"), "nested .git dirs excluded")
 	_check(not CollabWorkspaceService.is_source_file(".godot"), "bare excluded name rejected")
 
@@ -169,7 +177,11 @@ func _test_filesync_paths() -> void:
 	DirAccess.make_dir_recursive_absolute(ws_root.path_join("addons/godot_collab"))
 	DirAccess.make_dir_recursive_absolute(ws_root.path_join(".godot"))
 	_write_text(ws_root.path_join("project.godot"), "config_version=5\n")
+	_write_text(ws_root.path_join("export_presets.cfg"), "[preset.0]\nname=\"Linux\"\n")
+	_write_text(ws_root.path_join("LICENSE"), "MIT\n")
+	_write_text(ws_root.path_join("icon.png.import"), "[remap]\n")
 	_write_text(ws_root.path_join("scripts/player.gd"), "extends Node\n")
+	_write_text(ws_root.path_join("scripts/player.gd.uid"), "uid://test\n")
 	_write_text(ws_root.path_join("addons/godot_collab/plugin.gd"), "extends Object\n")
 	_write_text(ws_root.path_join(".godot/cache.gd"), "cached\n")
 
@@ -181,8 +193,12 @@ func _test_filesync_paths() -> void:
 	workspace.setup(coordinator, CollabSettings.new(), logs, func() -> String: return ws_root, {})
 	workspace.prime_file_baseline()
 	var watched: Array = workspace.watched_paths()
-	_check(watched.has("project.godot"), "baseline tracks project.godot")
+	_check(watched.has("export_presets.cfg"), "baseline tracks export presets")
+	_check(not watched.has("project.godot"), "baseline never tracks project.godot")
+	_check(not watched.has("LICENSE"), "baseline never tracks extensionless files")
+	_check(not watched.has("icon.png.import"), "baseline never tracks import metadata")
 	_check(watched.has("scripts/player.gd"), "baseline tracks a project script")
+	_check(watched.has("scripts/player.gd.uid"), "baseline tracks uid sidecars")
 	_check(not watched.has("addons/godot_collab/plugin.gd"), "baseline never tracks addon files")
 	_check(not watched.has(".godot/cache.gd"), "baseline never tracks generated caches")
 
@@ -196,6 +212,112 @@ func _test_filesync_paths() -> void:
 	workspace.free()
 	coordinator.free()
 	manager.free()
+
+
+## True when [param value] contains an Object (resource/Node) anywhere.
+func _contains_object(value: Variant) -> bool:
+	var kind: int = typeof(value)
+	if kind == TYPE_OBJECT:
+		return true
+	if kind == TYPE_ARRAY:
+		for entry in (value as Array):
+			if _contains_object(entry):
+				return true
+	elif kind == TYPE_DICTIONARY:
+		var dict: Dictionary = value
+		for key in dict.keys():
+			if _contains_object(key) or _contains_object(dict[key]):
+				return true
+	return false
+
+
+func _test_project_settings_sync() -> void:
+	print("[project settings sync]")
+	# Only project configuration is shared; renderer/feature selection is not,
+	# so a client is never forced onto the host's renderer.
+	_check(CollabWorkspaceService.is_synced_project_setting("application/run/main_scene"), "main scene is shared")
+	_check(CollabWorkspaceService.is_synced_project_setting("application/config/name"), "project name is shared")
+	_check(CollabWorkspaceService.is_synced_project_setting("input/ui_accept"), "input actions are shared")
+	_check(CollabWorkspaceService.is_synced_project_setting("autoload/Game"), "autoloads are shared")
+	_check(CollabWorkspaceService.is_synced_project_setting("layer_names/3d_physics/layer_1"), "layer names are shared")
+	_check(not CollabWorkspaceService.is_synced_project_setting("rendering/renderer/rendering_method"), "renderer is not forced")
+	_check(not CollabWorkspaceService.is_synced_project_setting("application/config/features"), "renderer features are not forced")
+	_check(not CollabWorkspaceService.is_synced_project_setting("display/window/energy_saving/keep_screen_on"), "unlisted settings are ignored")
+	_check(not CollabWorkspaceService.is_synced_project_setting("input/"), "bare prefix is not a setting")
+
+	# Input events become plain dictionaries so the wire never carries objects.
+	var key := InputEventKey.new()
+	key.keycode = KEY_SPACE
+	key.physical_keycode = KEY_SPACE
+	var encoded: Variant = CollabWorkspaceService.encode_project_setting_value("input/jump", {"deadzone": 0.25, "events": [key]})
+	_check(typeof(encoded) == TYPE_DICTIONARY, "input action encodes as a dictionary")
+	_check(not _contains_object(encoded), "encoded input action contains no objects")
+	var encoded_action: Dictionary = encoded
+	_check(is_equal_approx(float(encoded_action.get("deadzone", 0.0)), 0.25), "input deadzone preserved")
+	var encoded_events: Array = encoded_action.get("events", [])
+	_check(encoded_events.size() == 1, "one input event encoded")
+	if encoded_events.size() == 1:
+		var entry: Dictionary = encoded_events[0]
+		_check(str(entry.get("type", "")) == "InputEventKey", "event class preserved")
+		_check(int(entry.get("keycode", 0)) == KEY_SPACE, "event keycode preserved")
+
+	# The payload must round-trip through the real framing with object encoding
+	# disabled, and rebuild the event on the far side.
+	var packet: PackedByteArray = CollabProtocol.encode(CollabProtocol.MessageType.PROJECT_SETTINGS, {"settings": {"input/jump": encoded}})
+	_check(not packet.is_empty(), "settings packet encodes without objects")
+	var decoded_packet: Dictionary = CollabProtocol.decode(packet)
+	_check(bool(decoded_packet.get("ok", false)), "settings packet decodes")
+	var decoded_settings: Dictionary = (decoded_packet.get("payload", {}) as Dictionary).get("settings", {})
+	var rebuilt: Variant = CollabWorkspaceService.decode_project_setting_value("input/jump", decoded_settings.get("input/jump"))
+	_check(typeof(rebuilt) == TYPE_DICTIONARY, "input action decodes")
+	var rebuilt_events: Array = (rebuilt as Dictionary).get("events", []) if typeof(rebuilt) == TYPE_DICTIONARY else []
+	_check(rebuilt_events.size() == 1 and rebuilt_events[0] is InputEventKey, "input event rebuilt as InputEventKey")
+	if rebuilt_events.size() == 1 and rebuilt_events[0] is InputEventKey:
+		_check((rebuilt_events[0] as InputEventKey).keycode == KEY_SPACE, "rebuilt event keeps its keycode")
+
+	# Unknown event classes and malformed payloads are dropped, never rebuilt.
+	_check(CollabWorkspaceService.decode_project_setting_value("input/x", {"events": [{"type": "Node", "name": "evil"}]})["events"].is_empty(), "non-input event class rejected")
+	_check(CollabWorkspaceService.decode_project_setting_value("input/x", {"events": [{"type": "InputEventKey", "script": "x"}]})["events"].size() == 1, "extra dictionary keys ignored")
+
+	# The real host snapshot is plain data and fits the wire budget.
+	var collected: Dictionary = CollabWorkspaceService.collect_project_settings()
+	_check(not collected.is_empty(), "host project settings collected")
+	_check(collected.has("input/ui_accept"), "default input map collected")
+	_check(not _contains_object(collected), "collected project settings contain no objects")
+	_check(var_to_bytes({"settings": collected}).size() <= CollabConstants.MAX_PROJECT_SETTINGS_BYTES, "collected settings fit the size cap")
+
+	# Applying: allow-listed values land in ProjectSettings, dangling resource
+	# references and unlisted keys are skipped.
+	var layer_key: String = "layer_names/2d_physics/layer_1"
+	var action_key: String = "input/collab_probe_action"
+	var renderer_key: String = "rendering/renderer/rendering_method"
+	var saved_layer: Variant = ProjectSettings.get_setting(layer_key)
+	var saved_renderer: Variant = ProjectSettings.get_setting(renderer_key)
+	var result: Dictionary = CollabWorkspaceService.apply_project_settings({
+		"autoload/CollabMissing": "*res://does/not/exist.gd",
+		layer_key: "CollabProbe",
+		action_key: {"deadzone": 0.5, "events": [{"type": "InputEventKey", "keycode": KEY_J}]},
+		renderer_key: "mobile",
+	})
+	_check(int(result.get("applied", 0)) == 2, "only resolvable allow-listed settings applied")
+	_check(str(ProjectSettings.get_setting(layer_key)) == "CollabProbe", "layer name applied to the editor")
+	var applied: Variant = ProjectSettings.get_setting(action_key)
+	_check(typeof(applied) == TYPE_DICTIONARY, "input action applied to the editor")
+	if typeof(applied) == TYPE_DICTIONARY:
+		var applied_events: Array = (applied as Dictionary).get("events", [])
+		_check(applied_events.size() == 1 and applied_events[0] is InputEventKey, "applied input action has a real event")
+	_check(not ProjectSettings.has_setting("autoload/CollabMissing"), "missing-resource autoload skipped")
+	_check(ProjectSettings.get_setting(renderer_key) == saved_renderer, "renderer setting untouched")
+
+	# Re-applying an identical snapshot is a no-op (no needless churn).
+	var again: Dictionary = CollabWorkspaceService.apply_project_settings({
+		layer_key: "CollabProbe",
+		action_key: {"deadzone": 0.5, "events": [{"type": "InputEventKey", "keycode": KEY_J}]},
+	})
+	_check(int(again.get("applied", 0)) == 0, "identical settings are not re-applied")
+
+	ProjectSettings.set_setting(layer_key, saved_layer)
+	ProjectSettings.clear(action_key)
 
 
 func _write_text(path: String, text: String) -> void:
@@ -270,6 +392,7 @@ func _init() -> void:
 	_test_pending_resource_resolution()
 	_test_settings_defaults()
 	_test_filesync_paths()
+	_test_project_settings_sync()
 	_test_id_reconciliation()
 	_test_loopback_session()
 	_test_relay_session()
@@ -1688,6 +1811,10 @@ func _test_workspace_relay_sync() -> void:
 	client.get_project_id = func() -> String: return "proj"
 	client.get_scene_id = func() -> String: return "res://w.tscn"
 	client.get_username = func() -> String: return "peer"
+	var client_messages: Array = []
+	client.workspace_message.connect(func(_from: int, type: int, _payload: Dictionary) -> void:
+		client_messages.append(type)
+	)
 
 	var host_ws := CollabWorkspaceService.new()
 	host_ws.setup(host, CollabSettings.new(), logs, func() -> String: return host_root, {})
@@ -1745,6 +1872,8 @@ func _test_workspace_relay_sync() -> void:
 	_check(FileAccess.file_exists(host_script), "relay client received a pre-existing host file at join")
 	_check(FileAccess.file_exists(client_script), "relay host received a pre-existing client-only file at join")
 	_check(caught_up, "relay join-time catch-up converged both projects")
+	# Project configuration travels as editor state, not as a project.godot file.
+	_check(client_messages.has(CollabProtocol.MessageType.PROJECT_SETTINGS), "relay client received project settings at join")
 
 	# A live host-side add must reach the client through the relay.
 	_write_text(host_root.path_join("scripts/live_from_host.gd"), "extends Node\n")
@@ -1874,11 +2003,15 @@ func _test_relay_project_mirror() -> void:
 		host_ws.poll()
 		client.poll()
 		client_ws.poll()
-		if FileAccess.file_exists(client_root.path_join("project.godot")) and FileAccess.file_exists(client_root.path_join("scenes/main.tscn")) and FileAccess.file_exists(client_root.path_join("notes/live.txt")):
+		# project.godot is never replayed as a raw file (it is host editor
+		# state), so the mirror replay delivers the project's content instead.
+		if FileAccess.file_exists(client_root.path_join("scenes/main.tscn")) and FileAccess.file_exists(client_root.path_join("notes/live.txt")):
 			replayed = true
 			break
 		OS.delay_msec(5)
 	_check(replayed, "joining client received the mirrored project state")
+	_check(not FileAccess.file_exists(client_root.path_join("project.godot")), "mirror replay never writes project.godot")
+	_check(FileAccess.file_exists(mirror_root.path_join("project.godot")), "relay mirror still stores project.godot")
 
 	client_ws.free()
 	host_ws.free()

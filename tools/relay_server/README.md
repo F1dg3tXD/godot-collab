@@ -51,10 +51,31 @@ Options (after `--`):
 | `--port <n>` | `45900` | UDP port to listen on |
 | `--max-clients <n>` | `64` | Maximum simultaneous ENet clients |
 | `--bind <address>` | `*` | Bind address (`*` = all interfaces) |
+| `--projects-dir <dir>` | `tools/relay_server/projects` | Live project mirror directory (pass `""` to disable) |
 | `--help` | | Show usage |
 
 Open the chosen UDP port in the relay host's firewall. The relay does **not**
 need to be reachable from the editors on any port other than this one.
+
+### Running in the background (relay + rendezvous + mirror)
+
+`relayctl.sh` starts **all** bundled services together — the relay, the
+short-code rendezvous, and the live project mirror — writes PID files and logs
+under `tools/relay_server/run/`, and stops/restarts them cleanly:
+
+```sh
+GODOT=/path/to/godot tools/relay_server/relayctl.sh start
+tools/relay_server/relayctl.sh status
+tools/relay_server/relayctl.sh restart --port 45900 --rendezvous-port 9080
+tools/relay_server/relayctl.sh stop
+```
+
+Options (for `start`/`restart`, all also settable as environment variables):
+`--port`, `--bind`, `--max-clients`, `--rendezvous-port`, `--rendezvous-bind`,
+`--projects-dir`, `--godot`. The resolved configuration is remembered in
+`run/config.env`, so `status` reports the ports actually in use. Logs are
+`run/relay.log` and `run/rendezvous.log`; `START_TIMEOUT` (default 30 s) bounds
+the readiness wait. `run/` is gitignored.
 
 ## Docker (recommended for server hardware)
 

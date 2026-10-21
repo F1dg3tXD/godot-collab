@@ -13,3 +13,6 @@ __pycache__/
 /tools/relay_server/projects/*
 !/tools/relay_server/projects/.gitkeep
 
+# Relay control-script runtime state (PID files, logs, last config)
+/tools/relay_server/run/
+

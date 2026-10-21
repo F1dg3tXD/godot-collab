@@ -13,12 +13,12 @@ cd /path/to/godot-colab
 - Exit code `0` and a final `RESULT: PASS` mean all checks passed.
 - Exit code `1` with `RESULT: FAIL` means at least one check failed; each failure
   is printed individually.
-- The suite (currently **336 checks**) covers: protocol framing/validation (bad
+- The suite (currently **381 checks**) covers: protocol framing/validation (bad
   magic, truncated packets, oversized payloads, non-dictionary payloads, the
   `CURSOR_UPDATE` `3d`/`2d` view shapes, and the
   workspace message types `WORKSPACE_REQUEST`/`WORKSPACE_RESULT`/`FILE_APPLY`/
-  `FILE_REMOVE`/`SCENE_LIST`/`FILE_SYNC_MANIFEST`, including text **and** byte
-  payloads), **relay
+  `FILE_REMOVE`/`SCENE_LIST`/`FILE_SYNC_MANIFEST`/`PROJECT_SETTINGS`, including
+  text **and** byte payloads), **relay
   framing** (`CollabRelayProtocol` register/registered/member-join/data round
   trips, short and oversized packets rejected), invitation code
   encode/decode (including the relay `gc2.…` form **and its embedded rendezvous
@@ -74,7 +74,13 @@ cd /path/to/godot-colab
   a relay: join-time catch-up in both directions plus a live host→client and
   client→host file add), and `_test_relay_project_mirror` (a relay started with
   `--projects-dir` pulls the host project into `live_<project>/`, persists live
-  file adds there, and replays the mirror to a client that joins later).
+  file adds there, and replays the mirror to a client that joins later, without
+  ever writing `project.godot` as a raw file). **File-sync eligibility** and
+  **project-settings sync** are covered by `_test_filesync_paths` (unknown/
+  absent extensions, `*.import`, `*.uid` sidecars, editor text/import extensions)
+  and `_test_project_settings_sync` (allow-list, input-event encoding with no
+  objects on the wire, packet round trip, applying to `ProjectSettings`, skipping
+  dangling `res://` references and renderer keys).
 
 Editor load / parse smoke check (confirms the plugin script parses in an editor
 context):
@@ -186,10 +192,13 @@ instances, enable **Godot Collab** in each, and run through the checks:
 8b. **Source file sync.** With the session running, edit a script
     (`res://scripts/*.gd`) on the client and save it. Confirm the host's file
     contents change on disk (and, if the editor reloads it, the host reflects
-    it). Then edit `project.godot` on the host and confirm the client receives
-    it. Confirm that editing anything under `addons/` is **not** relayed, and
-    that the dock shows the "do not edit addons while a session is live"
-    warning.
+    it). Then change a project setting on the host (for example add an input
+    action in **Project Settings → Input Map** or change the window width) and
+    confirm the client's Project Settings shows the new value while the client's
+    own `project.godot` on disk is **not** rewritten. Confirm that a
+    `project.godot` file dropped by the host is never written to the client, and
+    that editing anything under `addons/` is **not** relayed, and that the dock
+    shows the "do not edit addons while a session is live" warning.
 8d. **Resources + binary asset sync.** On one peer, assign a new material (create
     a `StandardMaterial3D` in the Inspector, or drag a texture from the
     Filesystem dock onto a `MeshInstance3D`'s `Material Override`) and confirm it
@@ -269,6 +278,18 @@ instances, enable **Godot Collab** in each, and run through the checks:
     the plain `godot --headless --script ...` form fails with
     `Could not find type "CollabRelayServer"` until `godot --headless --import`
     has run once.)
+
+    For a persistent deployment start everything in the background with the
+    control script (relay + rendezvous + mirror); `status` must report both
+    services running and `stop`/`restart` must work:
+
+    ```sh
+    GODOT=~/.apps/Godot/Godot_v4.7.2-stable_linux.x86_64 \
+      tools/relay_server/relayctl.sh start --port 45900 --rendezvous-port 9080
+    tools/relay_server/relayctl.sh status
+    tools/relay_server/relayctl.sh restart
+    tools/relay_server/relayctl.sh stop
+    ```
 
     On editor A, tick **Use a relay server** (on by default), enter `127.0.0.1`
     (or `127.0.0.1:45900`), and click **Host**. The dock should report a relay

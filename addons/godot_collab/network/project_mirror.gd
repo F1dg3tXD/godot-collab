@@ -105,6 +105,10 @@ func snapshot_frames(dest_app_id: int) -> Array:
 	if _root.is_empty():
 		return out
 	for rel in _walk():
+		# Replay only files a client accepts as live project content; generated
+		# import metadata and project.godot are never pushed as raw files.
+		if not CollabWorkspaceService.is_source_file(rel):
+			continue
 		var absolute: String = CollabPathGuard.resolve_within(_root, rel)
 		if absolute.is_empty():
 			continue

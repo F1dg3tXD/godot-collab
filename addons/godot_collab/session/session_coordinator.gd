@@ -56,6 +56,7 @@ const WORKSPACE_MESSAGE_TYPES: Array[int] = [
 	CollabProtocol.MessageType.SCENE_LIST,
 	CollabProtocol.MessageType.FILE_REMOVE,
 	CollabProtocol.MessageType.FILE_SYNC_MANIFEST,
+	CollabProtocol.MessageType.PROJECT_SETTINGS,
 ]
 
 var session_manager: CollabSessionManager

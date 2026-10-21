@@ -113,7 +113,10 @@ plus completion/error types.
 Workspace authoring: `WORKSPACE_REQUEST` (client → host: create scene / add
 file / delete file / list scenes), `WORKSPACE_RESULT` (host → peers:
 accept/reject), `FILE_APPLY` (host → peers: canonical file bytes),
-`FILE_REMOVE` (host → peers: a synced file was removed), `SCENE_LIST`.
+`FILE_REMOVE` (host → peers: a synced file was removed), `SCENE_LIST`,
+`FILE_SYNC_MANIFEST` (host → joining peer: tracked-file catch-up), and
+`PROJECT_SETTINGS` (host → peers: project configuration as editor state, never
+as a file).
 
 Best-effort traffic (cursor updates) uses `TRANSFER_MODE_UNRELIABLE_ORDERED`;
 everything else uses `TRANSFER_MODE_RELIABLE`. Control and file-transfer data
@@ -329,8 +332,9 @@ API (`request_add_file`) still exists for programmatic use and is what the
 watcher itself uses to upload a new client-side file.
 
 1. The requester validates the path locally with `CollabPathGuard`, a size cap
-   (`MAX_WORKSPACE_FILE_BYTES = 2 MiB`), and the exclusion policy
-   (`is_source_file`), so any file that is not explicitly excluded may travel.
+   (`MAX_WORKSPACE_FILE_BYTES = 2 MiB`), and the eligibility policy
+   (`is_source_file`, see below), so only files the editor can represent may
+   travel.
 2. The host re-validates everything (path traversal / symlink escape, extension,
    size, scene root class against `SCENE_ROOT_CLASSES`, existing-file policy) and
    writes the file **inside the approved project root only**.
@@ -382,17 +386,40 @@ that editing a script on any peer reaches the host and the other peers:
 4. Each receiver writes only inside its project root and refreshes its own
    baseline so the write is not re-detected as a local change.
 
-Eligibility is an **exclusion policy, not an allow-list**: every file under the
-project root is tracked unless a path segment matches a generated/vendor
-directory (`.godot/`, `.git/`, `.vscode/`, `.idea/`, `.import/`, `android/`) or
-**`addons/`**, or the suffix is temporary junk (`.tmp`, `.swp`, `.swo`,
-`.part`, `.crdownload`). Excluding `addons/` is a safety requirement: the
-add-on's own scripts run inside the editor, and live-editing them mid-session
-can crash the local editor and any client that receives the relayed bytes. The
-dock also shows an explicit warning when a session starts. Excluded directories
-are matched **per path segment**, so a nested copy such as `sub/.git/hooks/x.gd`
-is refused as well. Root-level dot-files (`.gitignore`, `.gdignore`,
-`.editorconfig`, `*.uid` sidecars) are watched like any other file.
+Eligibility follows what the **editor can actually represent**. A file travels
+only if it is a recognised resource (`tscn`, `tres`, `gd`, `gdshader`, …), an
+importable asset (`png`, `glb`, `wav`, …), a plain-text/"other" file the editor
+lists (`txt`, `md`, `yaml`, `json`, `cfg`, `ico`, …), or a `.uid` sidecar; and
+its path must not hit a generated/vendor directory (`.godot/`, `.git/`,
+`.vscode/`, `.idea/`, `.import/`, `android/`) or **`addons/`**. Everything else
+is skipped: unknown or absent extensions (`LICENSE`, `README`), generated
+`*.import` metadata, and temporary junk (`.tmp`, `.swp`, `.swo`, `.part`,
+`.crdownload`). This is deliberate — the editor has no loader for those files,
+so a peer that received them would only ever show failed-import markers, and
+`.import` metadata is machine-local (each editor regenerates it when it imports
+the source asset). `.uid` sidecars are the exception among editor-invisible
+files: they carry resource identity and must travel so `uid://` references stay
+resolvable. Excluding `addons/` is a safety requirement: the add-on's own
+scripts run inside the editor, and live-editing them mid-session can crash the
+local editor and any client that receives the relayed bytes. The dock also shows
+an explicit warning when a session starts. Excluded directories are matched
+**per path segment**, so a nested copy such as `sub/.git/hooks/x.gd` is refused
+as well.
+
+**`project.godot` is not a synced file.** It is never relayed or overwritten on
+a peer. Instead the host pushes its project configuration as editor state with
+`PROJECT_SETTINGS`: an allow-listed set of keys (application name/description/
+version, main scene, window size/stretch, physics gravity, default audio bus,
+translations, plus the `autoload/`, `global_group/`, `input/` and
+`layer_names/` groups). The message is sent on admit and re-broadcast whenever
+the host's configuration changes. Clients apply it with
+`ProjectSettings.set_setting()` — in memory, never saved to their
+`project.godot` — skipping values that reference `res://` paths missing
+locally, and never touching `rendering/*` or `application/config/features`, so
+a client is not forced onto the host's renderer. Input events are encoded as
+plain dictionaries (class name plus scalar properties, whitelisted event
+classes) before encoding, so the wire never carries an object; the encode call
+returns an empty packet if it ever sees one.
 
 **Join-time catch-up.** Baselines are primed at session start so pre-existing
 files are not blasted at peers, which means a newly admitted peer would

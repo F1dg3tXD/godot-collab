@@ -61,11 +61,18 @@ structured, validated operation protocol.
   collaborators can work in different scenes at once and the host switching tabs
   never reverts anyone's edits. Changes to a scene the host is not viewing are
   applied and persisted on the host.
-- **Source-file sync.** Changed scripts, resources, `project.godot` and binary
+- **Source-file sync.** Changed scripts, resources, `.uid` sidecars and binary
   assets (images, models, audio, fonts) are relayed to the host and to other
   peers (generated caches and, deliberately, `addons/` are excluded). Files are
   written to disk only, never executed. A scene file that is *open in the editor*
   is protected: it is driven by the operation stream, not by raw file writes.
+  Only files the editor can actually load are synced; extension-less files and
+  machine-local `*.import` metadata stay local, so peers never see
+  broken-import markers in the Filesystem dock.
+- **Project settings are synced as editor state.** The host's application
+  config, autoloads, input map, physics/layer names and similar settings are
+  pushed to clients over the wire; `project.godot` itself is never copied over
+  a peer's copy.
 - **Workspace authoring.** Collaborators can ask the host to create a new scene
   or add a project file — including by dropping a binary asset into the
   Filesystem dock; the host validates it (path/size/extension) and distributes a
@@ -119,8 +126,9 @@ peers, and UPnP mapping.
 5. With a scene open on both sides, edit a `Node3D` transform (via the Inspector
    or the 3D gizmo) or any other Inspector property. The change is applied to the
    host's scene and broadcast; client edits reach the host too. Changes to source
-   files (scripts, `project.godot`) are relayed as well — but never edit files
-   under `addons/` while a session is live.
+   files (scripts, resources) are relayed as well, and project settings changes
+   reach the client's editor — but never edit files under `addons/` while a
+   session is live.
 
 For internet use, relay mode is the default (see the next section). For direct
 LAN hosting, uncheck **Use a relay server** and use the host's LAN IP in a direct
@@ -136,6 +144,15 @@ can reach:
 
 ```
 GODOT=/path/to/godot tools/relay_server/run.sh --port 45900
+```
+
+For an unattended deployment, `relayctl.sh` starts the relay, the rendezvous
+service, and the project mirror together, with PID files and logs:
+
+```
+GODOT=/path/to/godot tools/relay_server/relayctl.sh start \
+  --port 45900 --rendezvous-port 9080
+tools/relay_server/relayctl.sh status     # or restart / stop
 ```
 
 The wrapper imports the project once (to build the GDScript class cache a fresh

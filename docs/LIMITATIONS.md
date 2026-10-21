@@ -28,8 +28,12 @@ are listed explicitly so nothing here is mistaken for working functionality.
   catch-up** flow (`FILE_SYNC_MANIFEST`) and a **relay project mirror** flow
   (relay pulls the host project into `live_<project>/` and replays it to a
   later-joining client), plus a **relay workspace sync** flow (join-time
-  catch-up and live file adds in both directions through a relay). It passes
-  (see [`TESTING.md`](TESTING.md)).
+  catch-up and live file adds in both directions through a relay), plus
+  **file-sync eligibility** (unknown/absent extensions and `*.import` excluded,
+  `*.uid` and editor-recognised types kept) and **project-settings sync**
+  (allow-list, object-free input-event encoding, packet round trip, applying to
+  `ProjectSettings`, dangling `res://` references and renderer keys skipped). It
+  passes (see [`TESTING.md`](TESTING.md)).
 - The interactive editor behaviours (dock UI, top-toolbar buttons, remote cursor
   drawing, `_forward_3d_gui_input` / `_forward_canvas_gui_input` /
   `_forward_canvas_draw_over_viewport`, scene
@@ -58,6 +62,13 @@ are listed explicitly so nothing here is mistaken for working functionality.
   content beyond `MAX_MIRROR_FILES` (20000) / the pull caps are not mirrored;
   the mirror is a convenience cache for late joiners, not a backup or the
   authoritative project copy. Nothing is ever mirrored back onto the host.
+- The relay mirror stores `project.godot` only from its initial project pull;
+  later **project-setting changes are not written into the mirror** (they are
+  still applied live to connected clients). A client that joins after a
+  settings change and relies on the mirror gets the older configuration.
+- **`relayctl.sh` is a convenience wrapper**, not a service manager: it does not
+  install a supervisor, restart on crash, or survive a reboot. Use systemd, a
+  process supervisor, or the Docker image for unattended deployments.
   In Docker the mirror directory must be **bind-mounted**; without it the
   image's `VOLUME` declaration creates an anonymous volume, so the mirrored
   projects are invisible on the host and are lost when the container is
@@ -224,13 +235,19 @@ are listed explicitly so nothing here is mistaken for working functionality.
 
 - When enabled (`godot_collab/collaboration/sync_source_files`, default on) the
   host and clients watch project files and relay changed contents to the host,
-  which applies and re-broadcasts them. Eligibility is an **exclusion policy**,
-  not an extension allow-list: everything travels except generated/vendor
-  directories (`.godot/`, `.git/`, `.vscode/`, `.idea/`, `.import/`, `android/`),
-  **`addons/`**, and temporary junk (`.tmp`, `.swp`, `.swo`, `.part`,
-  `.crdownload`). Excluded directories are matched per path segment. Per-file
-  content is capped at `MAX_WORKSPACE_FILE_BYTES` (2 MiB); larger files must use
-  the full project download.
+  which applies and re-broadcasts them. Eligibility follows what the **editor can
+  represent**: recognised resource/import/text extensions plus `.uid` sidecars,
+  with generated/vendor directories (`.godot/`, `.git/`, `.vscode/`, `.idea/`,
+  `.import/`, `android/`), **`addons/`**, `project.godot`, `*.import` metadata,
+  and temporary junk (`.tmp`, `.swp`, `.swo`, `.part`, `.crdownload`) excluded.
+  Excluded directories are matched per path segment.
+- **Files the editor does not list are not synced**: extension-less files
+  (`LICENSE`, `README`), unknown extensions, and `*.import` metadata (which is
+  machine-local and regenerated on import) stay local. Keeping `project.godot`
+  out of the file stream is deliberate: it is editor state, not content, and is
+  synced separately (see below).
+- Per-file content is capped at `MAX_WORKSPACE_FILE_BYTES` (2 MiB); larger files
+  must use the full project download.
 - **Join-time catch-up is bounded.** On admit, the host sends a file manifest and
   pushes its own files (256 files / 64 MiB caps, per-file 2 MiB); the client
   uploads only files the host lacks (same caps). Projects beyond those caps need
@@ -251,6 +268,25 @@ are listed explicitly so nothing here is mistaken for working functionality.
   Very large projects or rapid save storms may lag behind the scan interval.
 - File sync does **not** hot-reload a running editor. A received `.gd`/`.tres`
   takes effect when the editor recompiles/reloads it, not instantly on arrival.
+
+### Project settings (editor state)
+
+- `project.godot` is never transferred as a file. The host sends an allow-listed
+  subset of `ProjectSettings` (`application/config/*` basics, main scene, window
+  size/stretch, physics gravity, default audio bus, translations, plus the
+  `autoload/`, `global_group/`, `input/` and `layer_names/` groups) as the
+  `PROJECT_SETTINGS` message on join and whenever it changes.
+- Clients apply it **in memory only**; their `project.godot` on disk is not
+  rewritten. A setting they had changed locally is overridden by the host's value
+  while the session is live.
+- Settings that reference a `res://` path the client does not have yet are
+  skipped rather than applied to a dangling path.
+- `rendering/*` and `application/config/features` are intentionally **not**
+  synced, so a client is not forced onto the host's renderer.
+- Editor subsystems that read settings only at startup (renderer selection,
+  some feature tags) will not reflect an applied change until the editor
+  restarts; the Project Settings dock may also need to be reopened to repaint
+  new values. Changes are not saved to disk by the add-on.
 
 ### Warning: do not edit the add-on's own files during a live session
 

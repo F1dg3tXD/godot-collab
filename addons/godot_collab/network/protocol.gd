@@ -61,6 +61,7 @@ enum MessageType {
 	SCENE_LIST = 73, ## host -> peers: known project scenes
 	FILE_REMOVE = 74, ## host -> peers: delete this project file locally (rename/delete)
 	FILE_SYNC_MANIFEST = 75, ## host -> joining peer: manifest of tracked files for catch-up
+	PROJECT_SETTINGS = 76, ## host -> peers: project configuration as editor state
 }
 
 ## Named reasons a peer can be rejected or an operation refused.
@@ -87,6 +88,11 @@ const _ENCODE_MAX: int = CollabConstants.MAX_PACKET_PAYLOAD
 ## too large, so callers can simply skip sending.
 static func encode(type: MessageType, payload: Dictionary) -> PackedByteArray:
 	var body: PackedByteArray = var_to_bytes(payload)
+	# Object encoding is never enabled on the wire; var_to_bytes fails (empty)
+	# for payloads containing an Object. An empty body for a non-empty payload
+	# means the payload was not encodable, so refuse to send it.
+	if body.is_empty() and not payload.is_empty():
+		return PackedByteArray()
 	if body.size() > CollabConstants.MAX_PACKET_PAYLOAD:
 		return PackedByteArray()
 	var out: PackedByteArray = PackedByteArray()
@@ -271,6 +277,17 @@ static func _validate_payload(type: MessageType, payload: Dictionary) -> String:
 				var s: Variant = fe["sha256"]
 				if typeof(s) != TYPE_STRING or (s as String).length() > 64:
 					return "FILE_SYNC_MANIFEST bad sha256"
+		MessageType.PROJECT_SETTINGS:
+			if not payload.has("settings") or typeof(payload["settings"]) != TYPE_DICTIONARY:
+				return "PROJECT_SETTINGS missing settings"
+			var settings: Dictionary = payload["settings"]
+			if settings.size() > CollabConstants.MAX_PROJECT_SETTINGS:
+				return "PROJECT_SETTINGS too many entries"
+			for key in settings.keys():
+				if typeof(key) != TYPE_STRING:
+					return "PROJECT_SETTINGS bad key"
+				if (key as String).length() > 256:
+					return "PROJECT_SETTINGS key too long"
 		_:
 			pass
 	return ""
@@ -299,7 +316,7 @@ static func _check_int(payload: Dictionary, key: String) -> bool:
 
 
 static func _type_count() -> int:
-	return MessageType.FILE_SYNC_MANIFEST + 1
+	return MessageType.PROJECT_SETTINGS + 1
 
 
 static func _append_u32(buf: PackedByteArray, value: int) -> void:

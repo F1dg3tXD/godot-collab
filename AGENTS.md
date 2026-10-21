@@ -41,10 +41,12 @@ changes; keep them in sync when behavior changes.
 - All eight original milestones (plugin foundation, ENet session layer, invite
   codes/connectivity, remote cursors/presence, collaborative scene protocol,
   saving, project download, Git presence mode) are implemented and documented.
-- The headless test suite passes: **336 checks, 0 failures**.
+- The headless test suite passes: **381 checks, 0 failures**.
 - Full project file sync (exclusion-policy eligibility, rename/delete, and
-  join-time `FILE_SYNC_MANIFEST` catch-up) and the relay's optional
-  server-side project mirror are implemented; both are covered by the suite.
+  join-time `FILE_SYNC_MANIFEST` catch-up), host-to-client **project-settings
+  sync** (`PROJECT_SETTINGS`, `project.godot` is never transferred as a file),
+  and the relay's optional server-side project mirror are implemented; all are
+  covered by the suite.
 - The relay server, rendezvous service, and Docker image are implemented; the
   rendezvous `Store` has its own Python unit tests (6 tests, passing).
 - What is *not* verified or not implemented is listed explicitly in
@@ -92,7 +94,8 @@ addons/godot_collab/
   tests/                       headless test harness (run_tests.gd)
 tests/minimal_project/         minimal 3D project for two-editor manual tests
 tools/rendezvous_server/       rendezvous HTTP service (Python 3 stdlib) + tests
-tools/relay_server/            relay entry point, run.sh, Dockerfile, compose
+tools/relay_server/            relay entry point, run.sh, relayctl.sh,
+                               Dockerfile, compose
 docs/                          architecture, limitations, security, testing
 ```
 
@@ -133,7 +136,7 @@ Session tokens are never written to committed project files.
 ## Networking
 
 - **Transport:** one `ENetMultiplayerPeer` per session, polled from `_process`.
-- **Framing (`CollabProtocol`):** magic + `PROTOCOL_VERSION` (currently `5`) +
+- **Framing (`CollabProtocol`):** magic + `PROTOCOL_VERSION` (currently `6`) +
   type + length, 10-byte header, `MAX_PACKET_PAYLOAD` = 4 MiB. Decode validates
   magic, version, length, and per-type payload shape.
 - **Delivery:** reliable for session management, scene operations and transfer
@@ -143,7 +146,8 @@ Session tokens are never written to committed project files.
   (`CURSOR_UPDATE`/`SCENE_FOCUS`), scene ops (`OPS`/`OPS_ACK`/`OPS_REJECT`/
   snapshot/resync/conflict), saving (`SAVE_REQUEST`/`SAVE_RESULT`), transfer
   (`TRANSFER_*`), and workspace authoring (`WORKSPACE_REQUEST`/`RESULT`,
-  `FILE_APPLY`/`FILE_REMOVE`, `SCENE_LIST`, `FILE_SYNC_MANIFEST`).
+  `FILE_APPLY`/`FILE_REMOVE`, `SCENE_LIST`, `FILE_SYNC_MANIFEST`,
+  `PROJECT_SETTINGS`).
 - **Validation everywhere:** packet types and payload sizes are validated;
   operations and transfers are rate-limited; recursion/size/element caps apply.
 
@@ -249,10 +253,14 @@ structured operation protocol rather than overwriting `.tscn` files.
   drops.
 - **Workspace authoring (`CollabWorkspaceService`):** the host validates and
   distributes new scenes and every added/renamed/deleted/changed project file.
-  Eligibility is an exclusion policy, not an extension allow-list: everything
-  travels except `addons/`, generated/vendor dirs (`.godot/`, `.git/`,
-  `.vscode/`, `.idea/`, `.import/`, `android/`, matched per path segment), and
-  temporary junk. On admit, the host pushes a `FILE_SYNC_MANIFEST` plus its own
+  Eligibility follows what the editor can load: recognised resource/import/text
+  extensions plus `.uid` sidecars travel; `addons/`, generated/vendor dirs
+  (`.godot/`, `.git/`, `.vscode/`, `.idea/`, `.import/`, `android/`, matched per
+  path segment), `project.godot`, `*.import` metadata, extension-less/unknown
+  files, and temporary junk do not. `project.godot` is replaced by host→client
+  `PROJECT_SETTINGS` (allow-listed `application/*` config, `autoload/`,
+  `input/`, `global_group/`, `layer_names/`), applied in memory on the client
+  and never written to its file. On admit, the host pushes a `FILE_SYNC_MANIFEST` plus its own
   files (256 files / 64 MiB, per-file 2 MiB) and the client uploads only files
   the host lacks; host wins per file. A file open in the editor is protected on
   receivers (driven by the op stream), while the host relays its saved open
@@ -313,7 +321,7 @@ Headless parse smoke (should print nothing):
   | grep -iE "SCRIPT ERROR|Parse Error|Compile Error|Failed to load"
 ```
 
-Headless test suite (expect `336 checks, 0 failures` / `RESULT: PASS`):
+Headless test suite (expect `381 checks, 0 failures` / `RESULT: PASS`):
 
 ```sh
 ~/.apps/Godot/Godot_v4.7.2-stable_linux.x86_64 --headless \
@@ -333,6 +341,15 @@ mirror):
 ```sh
 GODOT=~/.apps/Godot/Godot_v4.7.2-stable_linux.x86_64 \
   tools/relay_server/run.sh --port 45900
+```
+
+Background control (relay + rendezvous + mirror, PID files/logs in
+`tools/relay_server/run/`, gitignored):
+
+```sh
+GODOT=~/.apps/Godot/Godot_v4.7.2-stable_linux.x86_64 \
+  tools/relay_server/relayctl.sh start --port 45900 --rendezvous-port 9080
+tools/relay_server/relayctl.sh status    # restart | stop
 ```
 
 Docker (relay UDP 45900 + rendezvous TCP 9080):

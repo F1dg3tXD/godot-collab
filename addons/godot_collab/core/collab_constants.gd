@@ -15,7 +15,10 @@ extends RefCounted
 ## 2D cursors send a canvas-space position instead of a camera ray.
 ## v5: added join-time file manifest sync (FILE_SYNC_MANIFEST) for full filesystem
 ## convergence and server-side project mirroring.
-const PROTOCOL_VERSION: int = 5
+## v6: project configuration is synchronised as editor state (PROJECT_SETTINGS)
+## instead of shipping project.godot, and generated *.import metadata is no
+## longer relayed.
+const PROTOCOL_VERSION: int = 6
 
 ## Magic marker placed at the front of every packet so garbage/foreign traffic
 ## is discarded before it reaches the decoder. Declared as a static var because
@@ -98,6 +101,13 @@ const MAX_WORKSPACE_FILE_BYTES: int = 2 * 1024 * 1024 # 2 MiB
 ## Upper bound on the number of scenes advertised in a SCENE_LIST message.
 const MAX_SCENE_LIST: int = 2048
 
+## Upper bound on the encoded project-settings payload (key/value editor state
+## pushed to clients). Keeps a large input map from crowding the packet budget.
+const MAX_PROJECT_SETTINGS_BYTES: int = 256 * 1024
+
+## Upper bound on the number of project settings synchronised in one message.
+const MAX_PROJECT_SETTINGS: int = 512
+
 ## Reserved peer id used by the relay's server-side project mirror when it pulls
 ## the host project through the normal transfer protocol. Chosen far above any
 ## ENet-assigned peer id so it can never collide with a real participant.
@@ -109,7 +119,7 @@ const MIRROR_PEER_ID: int = 1000
 ## project transfer path instead.
 const WRITABLE_EXTENSIONS: Array[String] = [
 	# Scenes and resources.
-	".tscn", ".scn", ".escn", ".tres", ".res", ".import",
+	".tscn", ".scn", ".escn", ".tres", ".res",
 	# Scripts and shaders.
 	".gd", ".gdshader", ".shader", ".gdshaderinc",
 	# Text/config.
