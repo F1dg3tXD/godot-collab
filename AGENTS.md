@@ -42,7 +42,7 @@ repository has no `docs/` directory; documentation lives in the wiki.
 - All eight original milestones (plugin foundation, ENet session layer, invite
   codes/connectivity, remote cursors/presence, collaborative scene protocol,
   saving, project download, Git presence mode) are implemented and documented.
-- The headless test suite passes: **397 checks, 0 failures**.
+- The headless test suite passes: **412 checks, 0 failures**.
 - Full project file sync (exclusion-policy eligibility, rename/delete, and
   join-time `FILE_SYNC_MANIFEST` catch-up), host-to-client **project-settings
   sync** (`PROJECT_SETTINGS`, `project.godot` is never transferred as a file),
@@ -355,7 +355,7 @@ Headless parse smoke (should print nothing):
   | grep -iE "SCRIPT ERROR|Parse Error|Compile Error|Failed to load"
 ```
 
-Headless test suite (expect `397 checks, 0 failures` / `RESULT: PASS`):
+Headless test suite (expect `412 checks, 0 failures` / `RESULT: PASS`):
 
 ```sh
 ~/.apps/Godot/Godot_v4.7.2-stable_linux.x86_64 --headless \

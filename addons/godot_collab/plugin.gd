@@ -167,6 +167,20 @@ func _enter_tree() -> void:
 	if _editor != null:
 		_ensure_scene_binding()
 
+	call_deferred("_repair_stale_temp_resource_refs")
+
+
+func _repair_stale_temp_resource_refs() -> void:
+	if _workspace == null:
+		return
+	var repaired: int = _workspace.repair_stale_temp_resource_refs()
+	if repaired <= 0:
+		return
+	var message: String = "Repaired %d project file(s) referencing expired temporary collaboration resources." % repaired
+	_logs.warn(message)
+	if _dock != null:
+		_dock.push_message(message, false)
+
 
 func _exit_tree() -> void:
 	if _transfer != null:

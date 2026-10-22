@@ -53,6 +53,19 @@ const FILESYNC_EXCLUDED_SUFFIXES: Array[String] = [".import", ".tmp", ".swp", ".
 ## travel so `uid://` references stay resolvable on every peer.
 const FILESYNC_UID_SUFFIX: String = ".uid"
 
+## Prefixes of the temporary files used to serialise/rebuild inline resources.
+## A saved scene must never keep an external reference to one of these.
+const STALE_TEMP_RESOURCE_PREFIXES: Array[String] = [
+	"user://godot_collab_recv_",
+	"user://godot_collab_inline_",
+]
+
+## Text resource files that may contain a stale temporary external reference.
+const REPAIR_TEXT_EXTENSIONS: Array[String] = [".tscn", ".escn", ".tres"]
+
+## Upper bound on a file read during the one-time stale-reference repair.
+const REPAIR_MAX_FILE_BYTES: int = 8 * 1024 * 1024
+
 ## Plain-text extensions the editor displays as text files (its default
 ## `docks/filesystem/textfile_extensions`). They never require an importer.
 const FILESYNC_TEXT_EXTENSIONS: Array[String] = ["txt", "md", "cfg", "ini", "log", "json", "yml", "yaml", "toml", "xml"]
@@ -609,6 +622,99 @@ func _relay_local_removal(rel: String) -> void:
 			"path": rel,
 		})
 		status.emit("Requested deletion of '%s' on the host." % rel)
+
+
+## Repairs text scenes/resources written by an older build that externalised an
+## inline resource to its temporary `user://godot_collab_*` file. Those temp files
+## are deleted immediately, so the saved reference can only produce load errors.
+## Returns the number of files rewritten.
+func repair_stale_temp_resource_refs() -> int:
+	if not _project_root.is_valid():
+		return 0
+	var root: String = str(_project_root.call())
+	if root.is_empty():
+		return 0
+	return _repair_stale_temp_dir(root, "")
+
+
+func _repair_stale_temp_dir(absolute: String, rel_prefix: String) -> int:
+	var repaired: int = 0
+	var dir: DirAccess = DirAccess.open(absolute)
+	if dir == null:
+		return 0
+	dir.list_dir_begin()
+	var name: String = dir.get_next()
+	while name != "":
+		var rel: String = (rel_prefix + "/" + name) if not rel_prefix.is_empty() else name
+		var abs: String = absolute.path_join(name)
+		if dir.current_is_dir():
+			if not dir.is_link(name) and not _filesync_dir_excluded(rel):
+				repaired += _repair_stale_temp_dir(abs, rel)
+		elif REPAIR_TEXT_EXTENSIONS.has("." + abs.get_extension().to_lower()):
+			repaired += _repair_stale_temp_file(abs)
+		name = dir.get_next()
+	dir.list_dir_end()
+	return repaired
+
+
+func _repair_stale_temp_file(path: String) -> int:
+	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return 0
+	if file.get_length() <= 0 or file.get_length() > REPAIR_MAX_FILE_BYTES:
+		file.close()
+		return 0
+	var text: String = file.get_as_text()
+	file.close()
+	var repaired: String = strip_stale_temp_resource_refs(text)
+	if repaired == text:
+		return 0
+	var out: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+	if out == null:
+		return 0
+	out.store_string(repaired)
+	out.close()
+	return 1
+
+
+## Removes `[ext_resource]` declarations pointing at a temporary collaboration
+## resource and replaces their `ExtResource(...)` uses with `null`. Any other
+## content is left byte-for-byte unchanged. Returns [param text] when unaffected.
+static func strip_stale_temp_resource_refs(text: String) -> String:
+	var stale_ids: Array[String] = []
+	var kept: PackedStringArray = PackedStringArray()
+	for line in text.split("\n"):
+		if line.begins_with("[ext_resource") and _line_has_stale_temp_path(line):
+			var id: String = _ext_resource_line_id(line)
+			if not id.is_empty():
+				stale_ids.append(id)
+				continue
+		kept.append(line)
+	if stale_ids.is_empty():
+		return text
+	var repaired: String = "\n".join(kept)
+	for id in stale_ids:
+		repaired = repaired.replace('ExtResource("%s")' % id, "null")
+	return repaired
+
+
+static func _line_has_stale_temp_path(line: String) -> bool:
+	for prefix in STALE_TEMP_RESOURCE_PREFIXES:
+		if line.contains('path="%s' % prefix):
+			return true
+	return false
+
+
+static func _ext_resource_line_id(line: String) -> String:
+	var marker: String = 'id="'
+	var start: int = line.find(marker)
+	if start < 0:
+		return ""
+	start += marker.length()
+	var end: int = line.find('"', start)
+	if end <= start:
+		return ""
+	return line.substr(start, end - start)
 
 
 ## Walks the project, collecting watched source files as rel -> {size, mtime, sha}.

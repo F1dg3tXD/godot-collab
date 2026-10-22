@@ -115,6 +115,19 @@ func _test_property_values() -> void:
 		var restored: StandardMaterial3D = decoded_res
 		_check(restored.albedo_color.is_equal_approx(Color(0.2, 0.4, 0.9)), "inline resource preserves colour")
 		_check(is_equal_approx(restored.roughness, 0.25), "inline resource preserves roughness")
+		_check(restored.resource_path.is_empty(), "inline resource is detached from the temp receive path")
+		var carrier := MeshInstance3D.new()
+		carrier.material_override = restored
+		var packed := PackedScene.new()
+		var pack_err: Error = packed.pack(carrier)
+		var probe_path: String = "user://collab_inline_probe.tscn"
+		var save_err: Error = ResourceSaver.save(packed, probe_path)
+		var probe_text: String = FileAccess.get_file_as_string(probe_path) if save_err == OK else ""
+		if FileAccess.file_exists(probe_path):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(probe_path))
+		_check(pack_err == OK and save_err == OK, "inline resource packs into a scene")
+		_check(not probe_text.contains("godot_collab_recv_"), "saved scene embeds the resource instead of the temp path")
+		carrier.free()
 	# A cleared object property reports TYPE_OBJECT with a null value; it must
 	# encode as null (not unsupported) so a later null -> resource change is
 	# detected by the diff watcher instead of being silently ignored.
@@ -387,6 +400,8 @@ func _init() -> void:
 	_test_node_id_map()
 	_test_property_values()
 	_test_inline_resource_safety()
+	_test_stale_temp_repair()
+	_test_stale_temp_file_repair()
 	_test_resource_content_sync()
 	_test_deep_resource_watch()
 	_test_pending_resource_resolution()
@@ -443,6 +458,56 @@ func _test_inline_resource_safety() -> void:
 	_check(CollabSceneOperations.decode_value(kind, "") == null, "empty inline payload is refused")
 	var oversized: String = "x".repeat(CollabSceneOperations.MAX_INLINE_RESOURCE_TEXT + 1)
 	_check(CollabSceneOperations.decode_value(kind, oversized) == null, "oversized inline payload is refused")
+
+
+func _test_stale_temp_repair() -> void:
+	print("[stale temp resource repair]")
+	var corrupt: String = """[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Material" path="user://godot_collab_recv_123_4.tres" id="1_bad"]
+[ext_resource type="Texture2D" path="res://icon.svg" id="2_good"]
+
+[node name="Root" type="MeshInstance3D"]
+material_override = ExtResource("1_bad")
+texture = ExtResource("2_good")
+"""
+	var repaired: String = CollabWorkspaceService.strip_stale_temp_resource_refs(corrupt)
+	_check(not repaired.contains("godot_collab_recv_"), "stale temp ext_resource removed")
+	_check(not repaired.contains('ExtResource("1_bad")'), "stale temp reference replaced")
+	_check(repaired.contains("material_override = null"), "stale reference becomes null")
+	_check(repaired.contains('path="res://icon.svg" id="2_good"'), "valid external resource kept")
+	_check(repaired.contains('texture = ExtResource("2_good")'), "valid external reference kept")
+	_check(CollabWorkspaceService.strip_stale_temp_resource_refs(repaired) == repaired, "repair is idempotent")
+	var inline_case: String = '[gd_scene format=3]\n[ext_resource type="Material" path="user://godot_collab_inline_5.tres" id="1_x"]\n'
+	_check(not CollabWorkspaceService.strip_stale_temp_resource_refs(inline_case).contains("godot_collab_inline_"), "sender-side inline temp path removed")
+	_check(CollabWorkspaceService.strip_stale_temp_resource_refs("no refs") == "no refs", "unaffected text unchanged")
+
+
+func _test_stale_temp_file_repair() -> void:
+	print("[stale temp file repair]")
+	var root: String = "user://collab_repair_probe"
+	var abs_root: String = ProjectSettings.globalize_path(root)
+	DirAccess.make_dir_recursive_absolute(abs_root)
+	var broken_path: String = abs_root.path_join("broken.tscn")
+	var broken := FileAccess.open(broken_path, FileAccess.WRITE)
+	broken.store_string('[gd_scene format=3]\n[ext_resource type="Material" path="user://godot_collab_recv_9_1.tres" id="1_x"]\n[node name="N" type="Node3D"]\n')
+	broken.close()
+	var clean_path: String = abs_root.path_join("clean.tres")
+	var clean_text: String = '[gd_resource type="Material" format=3]\n'
+	var clean := FileAccess.open(clean_path, FileAccess.WRITE)
+	clean.store_string(clean_text)
+	clean.close()
+	var service := CollabWorkspaceService.new()
+	service._project_root = func() -> String: return abs_root
+	var repaired: int = service.repair_stale_temp_resource_refs()
+	_check(repaired == 1, "one stale file repaired on disk")
+	_check(not FileAccess.get_file_as_string(broken_path).contains("godot_collab_recv_"), "disk scene no longer references the temp file")
+	_check(FileAccess.get_file_as_string(broken_path).contains('[node name="N" type="Node3D"]'), "unrelated scene content preserved")
+	_check(FileAccess.get_file_as_string(clean_path) == clean_text, "unaffected resource left unchanged")
+	DirAccess.remove_absolute(broken_path)
+	DirAccess.remove_absolute(clean_path)
+	DirAccess.remove_absolute(abs_root)
+	service.free()
 
 
 ## File-backed resources must carry their serialised content, not just their

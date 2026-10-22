@@ -441,10 +441,16 @@ static func _load_inline_resource(text: String) -> Resource:
 		return null
 	file.store_string(text)
 	file.close()
-	var loaded: Variant = ResourceLoader.load(path)
+	var loaded: Variant = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 	if FileAccess.file_exists(path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
-	return loaded as Resource
+	var resource := loaded as Resource
+	if resource != null:
+		# The temp file is gone, so the rebuilt resource must not keep pointing at
+		# it; otherwise saving the scene would externalise an unopenable user://
+		# path instead of embedding the resource as a sub-resource.
+		resource.set_path("")
+	return resource
 
 
 static func _contains_unsafe_inline(text: String) -> bool:
