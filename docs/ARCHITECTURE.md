@@ -370,7 +370,7 @@ gates the whole feature; it is always disabled in Git presence mode.
 ## Source-file sync (host-authoritative)
 
 Scene edits flow through the structured operation stream; ordinary **source
-files** (scripts, text resources, `project.godot`, `export_presets.cfg`) flow
+files** (scripts, text resources, `export_presets.cfg`) flow
 through a separate, host-authoritative file path in `CollabWorkspaceService` so
 that editing a script on any peer reaches the host and the other peers:
 

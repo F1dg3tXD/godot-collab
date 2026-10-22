@@ -11,7 +11,6 @@ extends RefCounted
 const SETTING_ROOT: String = "godot_collab"
 
 const KEY_USERNAME: String = SETTING_ROOT + "/identity/username"
-const KEY_AUTO_CONNECT_LAST: String = SETTING_ROOT + "/identity/auto_connect_last"
 const KEY_PORT: String = SETTING_ROOT + "/network/udp_port"
 const KEY_MAX_PEERS: String = SETTING_ROOT + "/network/max_peers"
 const KEY_RENDEZVOUS_URL: String = SETTING_ROOT + "/network/rendezvous_url"
@@ -50,7 +49,6 @@ func register_defaults() -> void:
 	if _settings == null:
 		return
 	_register(KEY_USERNAME, "", TYPE_STRING, "Your display name shown to other collaborators.")
-	_register(KEY_AUTO_CONNECT_LAST, false, TYPE_BOOL, "Reconnect to the last session on editor start.")
 	_register(KEY_PORT, CollabConstants.DEFAULT_PORT, TYPE_INT, "UDP port used when hosting.")
 	_register(KEY_MAX_PEERS, CollabConstants.DEFAULT_MAX_PEERS, TYPE_INT, "Maximum number of remote peers.", 1, 64)
 	_register(KEY_RENDEZVOUS_URL, CollabConstants.DEFAULT_RENDEZVOUS_URL, TYPE_STRING, "Rendezvous service URL for short invitation codes. Leave blank to auto-derive it from the relay address (http://<relay-host>:9080).")
@@ -74,7 +72,7 @@ func register_defaults() -> void:
 	_register(KEY_APPROVE_JOINS, false, TYPE_BOOL, "Require the host to approve each participant before granting workspace access. Off by default; enable for untrusted networks.")
 	_register(KEY_REQUIRE_TOKEN, true, TYPE_BOOL, "Require the session token embedded in the invitation code. Disable only for trusted LAN testing.")
 	_register(KEY_ALLOW_WORKSPACE_AUTHORING, true, TYPE_BOOL, "Allow collaborators to create scenes and add files to the host workspace.")
-	_register(KEY_FILE_SYNC, true, TYPE_BOOL, "Relay source-file changes (scripts, shaders, resources, project.godot) to the host. Files under addons/ are never synced.")
+	_register(KEY_FILE_SYNC, true, TYPE_BOOL, "Relay source-file changes (scripts, shaders, resources, export_presets.cfg) to the host. project.godot is applied as editor state instead, and addons/ is never synced.")
 
 
 func get_string(key: String, default: String = "") -> String:
