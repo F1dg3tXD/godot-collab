@@ -215,6 +215,8 @@ version of the add-on.
 
 ## Documentation
 
+- [Project wiki](https://github.com/F1dg3tXD/godot-collab/wiki) — getting
+  started, invitations, collaboration, hosting, settings, FAQ.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — components, data flow,
   protocol, conflict policy.
 - [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) — what is not implemented or
