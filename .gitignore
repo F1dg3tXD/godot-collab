@@ -16,3 +16,8 @@ __pycache__/
 # Relay control-script runtime state (PID files, logs, last config)
 /tools/relay_server/run/
 
+# Local environment files (relay password and deployment settings)
+.env
+.env.*
+!.env.example
+
