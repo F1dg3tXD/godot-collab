@@ -194,5 +194,7 @@ Run it directly with `python3 tools/rendezvous_server/rendezvous_server.py
   use a password on any relay reachable from the public internet. Neither is
   encryption and neither identifies individual users.
 
-See [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) and
-[`docs/LIMITATIONS.md`](../../docs/LIMITATIONS.md) for the wider picture.
+See the
+[Architecture](https://github.com/F1dg3tXD/godot-collab/wiki/Architecture) and
+[Hosting a Relay](https://github.com/F1dg3tXD/godot-collab/wiki/Hosting-a-Relay)
+wiki pages for the wider picture.

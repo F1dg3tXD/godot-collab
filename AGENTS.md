@@ -29,12 +29,13 @@ relay server that works behind NAT/CGNAT with no port forwarding.
 
 This file describes the project **as it exists now**, so that an authorized
 agent can maintain and extend it without rebuilding it from scratch. The
-authoritative documents are [`README.md`](README.md),
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md),
-[`docs/LIMITATIONS.md`](docs/LIMITATIONS.md),
-[`docs/SECURITY.md`](docs/SECURITY.md), and
-[`docs/TESTING.md`](docs/TESTING.md). Read those before making non-trivial
-changes; keep them in sync when behavior changes.
+authoritative documents are [`README.md`](README.md) and the project wiki:
+[Architecture](https://github.com/F1dg3tXD/godot-collab/wiki/Architecture),
+[Limitations](https://github.com/F1dg3tXD/godot-collab/wiki/Limitations),
+[Security](https://github.com/F1dg3tXD/godot-collab/wiki/Security) and
+[Testing](https://github.com/F1dg3tXD/godot-collab/wiki/Testing). Read those
+before making non-trivial changes; keep them in sync when behavior changes. The
+repository has no `docs/` directory; documentation lives in the wiki.
 
 ## Status
 
@@ -49,10 +50,11 @@ changes; keep them in sync when behavior changes.
   covered by the suite.
 - The relay server, rendezvous service, and Docker image are implemented; the
   rendezvous `Store` has its own Python unit tests (6 tests, passing).
-- What is *not* verified or not implemented is listed explicitly in
-  [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md). Do not present those as done.
-  In particular, cross-internet connectivity and all GUI-only behaviors are
-  **loopback/parse tested at most**; they require two interactive editors.
+- What is *not* verified or not implemented is listed explicitly in the
+  [Limitations wiki page](https://github.com/F1dg3tXD/godot-collab/wiki/Limitations).
+  Do not present those as done. In particular, cross-internet connectivity and
+  all GUI-only behaviors are **loopback/parse tested at most**; they require two
+  interactive editors.
 
 ## Hard constraints
 
@@ -96,13 +98,13 @@ tests/minimal_project/         minimal 3D project for two-editor manual tests
 tools/rendezvous_server/       rendezvous HTTP service (Python 3 stdlib) + tests
 tools/relay_server/            relay entry point, run.sh, relayctl.sh,
                                Dockerfile, compose
-docs/                          architecture, limitations, security, testing
 ```
 
 ## Architecture at a glance
 
-Design constraints and the full component table live in
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The essential shape:
+Design constraints, the full component table, protocol details and caps live in
+the [Architecture wiki page](https://github.com/F1dg3tXD/godot-collab/wiki/Architecture).
+The essential shape:
 
 - **Host-authoritative.** The host owns the workspace, the authoritative scene
   revision, the node-id table, and the participant list. Clients submit
@@ -153,7 +155,10 @@ Session tokens are never written to committed project files.
 
 ## Connectivity
 
-Three reachable paths, all over ENet/UDP (see `docs/ARCHITECTURE.md`):
+Three reachable paths, all over ENet/UDP (see the
+[Architecture](https://github.com/F1dg3tXD/godot-collab/wiki/Architecture) and
+[Connectivity and Relay](https://github.com/F1dg3tXD/godot-collab/wiki/Connectivity-and-Relay)
+wiki pages):
 
 1. **Direct** — client connects to the host's `ip:port`; invitation `gc1.…`.
    Works on LAN/loopback; over the internet it needs a reachable host port
@@ -323,7 +328,9 @@ dock shows it prominently. Presence mode is independent of host-workspace mode.
 
 ## Security model
 
-Details and threat model: [`docs/SECURITY.md`](docs/SECURITY.md). In short:
+Details and threat model:
+[Security wiki page](https://github.com/F1dg3tXD/godot-collab/wiki/Security). In
+short:
 
 - The host approves new participants before granting workspace access
   (opt-in; enable on untrusted networks).
@@ -394,8 +401,9 @@ container recreation. The relay logs the resolved mirror directory at startup.
 
 Two-editor GUI behaviors (dock, toolbar, cursor drawing, shared save, download,
 approval) are **not** covered by the headless suite; the reproducible manual
-procedure is in [`docs/TESTING.md`](docs/TESTING.md). Do not report GUI-only
-checks as passing without actually running two editors.
+procedure is in the
+[Testing wiki page](https://github.com/F1dg3tXD/godot-collab/wiki/Testing). Do
+not report GUI-only checks as passing without actually running two editors.
 
 ### Class-cache gotcha
 
@@ -423,7 +431,9 @@ the Docker image does it at build time).
 
 ## Known limitations
 
-See [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) for the full list. Highlights:
+See the
+[Limitations wiki page](https://github.com/F1dg3tXD/godot-collab/wiki/Limitations)
+for the full list. Highlights:
 no encryption; relay and rendezvous are loopback-tested only (not across real
 NATs); no automatic reconnection/fallback once a connection drops; cursor depth
 is a point on the ray, not a surface hit; some editor subsystems (arbitrary

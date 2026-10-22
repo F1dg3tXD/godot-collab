@@ -8,7 +8,7 @@
 ## These cover the pure/data layers (protocol framing, invitation codes, path
 ## validation, rate limiting) and a real ENet loopback handshake between a host
 ## and client coordinator. GUI-only behaviour (3D overlay drawing) still needs
-## the manual procedure documented in docs/TESTING.md.
+## the manual procedure on the project wiki's Testing page.
 extends SceneTree
 
 var _checks: int = 0
@@ -161,7 +161,7 @@ func _test_filesync_paths() -> void:
 	# no loader, so a peer would only ever see them as failed imports; generated
 	# .import metadata is machine-local and is rebuilt by each editor.
 	_check(not CollabWorkspaceService.is_source_file("LICENSE"), "extensionless files excluded")
-	_check(not CollabWorkspaceService.is_source_file("docs/README"), "extensionless doc excluded")
+	_check(not CollabWorkspaceService.is_source_file("notes/README"), "extensionless doc excluded")
 	_check(not CollabWorkspaceService.is_source_file("icon.png.import"), "generated import metadata excluded")
 	_check(not CollabWorkspaceService.is_source_file("data/dump.tmp"), "temporary junk excluded")
 	_check(CollabWorkspaceService.is_source_file("scripts/player.gd.uid"), "uid sidecars still watched")

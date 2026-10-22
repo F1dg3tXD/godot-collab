@@ -9,9 +9,10 @@ lets a host own an authoritative shared scene that clients can edit through a
 structured, validated operation protocol.
 
 > Status: early but functional. The connection layer, participant presence,
-> remote 3D cursors, and the host-authoritative scene-edit protocol are
-> implemented. See [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) for exactly what
-> is and is not supported today.
+> remote 3D/2D cursors, and the host-authoritative scene-edit protocol are
+> implemented. See the
+> [Limitations page](https://github.com/F1dg3tXD/godot-collab/wiki/Limitations)
+> for exactly what is and is not supported today.
 
 ## Features
 
@@ -35,7 +36,8 @@ structured, validated operation protocol.
   (`live_<project>/`) that is replayed to clients that join later. The Docker
   image also bundles the short-code
   rendezvous service so a host can offer a short code instead. See
-  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+  [Connectivity and Relay](https://github.com/F1dg3tXD/godot-collab/wiki/Connectivity-and-Relay)
+  and [Hosting a Relay](https://github.com/F1dg3tXD/godot-collab/wiki/Hosting-a-Relay).
 - Optional UPnP UDP port mapping, with honest connectivity reporting
   (LAN-only vs. externally reachable vs. relay vs. unverified).
 - Remote 3D cursors and usernames drawn in the editor viewport, with per-user
@@ -108,6 +110,10 @@ structured, validated operation protocol.
 
 ## Installation
 
+Full setup instructions are on the
+[Getting Started](https://github.com/F1dg3tXD/godot-collab/wiki/Getting-Started)
+page.
+
 1. Copy `addons/godot_collab/` into your Godot project's `addons/` directory.
 2. Open the project in Godot 4.7.2.
 3. `Project > Project Settings > Plugins`, then enable **Godot Collab**.
@@ -117,6 +123,11 @@ To remove it, disable the plugin. It tears down its nodes, timers, network
 peers, and UPnP mapping.
 
 ## Quick start (two editors on one machine)
+
+See [Getting Started](https://github.com/F1dg3tXD/godot-collab/wiki/Getting-Started)
+for the full walkthrough, and
+[Invitation Codes](https://github.com/F1dg3tXD/godot-collab/wiki/Invitation-Codes)
+for what the codes contain.
 
 1. In editor **A**: open the dock, set a username, click **Host** in the top
    toolbar. Copy the invitation code from the dock (**Copy Code** in the toolbar).
@@ -138,7 +149,9 @@ peers, and UPnP mapping.
 For internet use, relay mode is the default (see the next section). For direct
 LAN hosting, uncheck **Use a relay server** and use the host's LAN IP in a direct
 invitation; the rendezvous service, UPnP, and manual port forwarding are optional
-refinements. See [`docs/TESTING.md`](docs/TESTING.md).
+refinements. See the
+[Testing page](https://github.com/F1dg3tXD/godot-collab/wiki/Testing) for the
+reproducible two-editor checks.
 
 ### Collaborating over the internet without port forwarding
 
@@ -190,7 +203,7 @@ invitation code; joining clients decode the relay endpoint, room, and rendezvous
 URL from it, so **pasting the long code sets the client up automatically** — after
 that, six-character short codes from the same server work with no manual setup.
 The relay only forwards bytes — it is not an application server, and it stores
-nothing on disk.
+nothing on disk by default (the optional project mirror is described above).
 
 ### Requiring a relay password
 
@@ -215,14 +228,35 @@ version of the add-on.
 
 ## Documentation
 
-- [Project wiki](https://github.com/F1dg3tXD/godot-collab/wiki) — getting
-  started, invitations, collaboration, hosting, settings, FAQ.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — components, data flow,
-  protocol, conflict policy.
-- [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) — what is not implemented or
-  verified yet.
-- [`docs/SECURITY.md`](docs/SECURITY.md) — threat model and protections.
-- [`docs/TESTING.md`](docs/TESTING.md) — reproducible automated and manual tests.
+The [project wiki](https://github.com/F1dg3tXD/godot-collab/wiki) is the
+documentation home:
+
+- [Getting Started](https://github.com/F1dg3tXD/godot-collab/wiki/Getting-Started)
+  — install, host/join, workspace modes.
+- [Invitation Codes](https://github.com/F1dg3tXD/godot-collab/wiki/Invitation-Codes)
+  — `gc1`/`gc2`/short codes, expiry, safety.
+- [Scene and File Collaboration](https://github.com/F1dg3tXD/godot-collab/wiki/Scene-and-File-Collaboration)
+  — editing, conflicts, saving, file sync, download, Git presence.
+- [Connectivity and Relay](https://github.com/F1dg3tXD/godot-collab/wiki/Connectivity-and-Relay)
+  — direct, short codes, relay, passwords.
+- [Hosting a Relay](https://github.com/F1dg3tXD/godot-collab/wiki/Hosting-a-Relay)
+  — deployment, Docker, systemd, mirror, TLS and upgrades.
+- [Settings Reference](https://github.com/F1dg3tXD/godot-collab/wiki/Settings-Reference)
+  — every `godot_collab/*` Editor Setting and its default.
+- [Architecture](https://github.com/F1dg3tXD/godot-collab/wiki/Architecture)
+  — components, protocol, data flow, caps, conflict policy.
+- [Security](https://github.com/F1dg3tXD/godot-collab/wiki/Security) — threat
+  model, protections, safe configuration.
+- [Testing](https://github.com/F1dg3tXD/godot-collab/wiki/Testing) — headless
+  suite, relay smoke tests, two-editor manual checks.
+- [Troubleshooting](https://github.com/F1dg3tXD/godot-collab/wiki/Troubleshooting)
+  — common problems and fixes.
+- [Limitations](https://github.com/F1dg3tXD/godot-collab/wiki/Limitations) — what
+  is not implemented or verified.
+- [Contributing](https://github.com/F1dg3tXD/godot-collab/wiki/Contributing) —
+  repository conventions and verification commands.
+- [FAQ](https://github.com/F1dg3tXD/godot-collab/wiki/FAQ) — short answers to
+  common questions.
 - [`tools/rendezvous_server/`](tools/rendezvous_server/) — optional short-code
   lookup service.
 - [`tools/relay_server/`](tools/relay_server/) — dedicated relay server (headless
@@ -246,9 +280,8 @@ addons/godot_collab/
 tests/minimal_project/         minimal 3D project for two-editor tests
 tools/rendezvous_server/       optional rendezvous service (Python stdlib)
 tools/relay_server/            relay + bundled rendezvous (headless Godot + Dockerfile/compose)
-docs/                          architecture, limitations, security, testing
 ```
 
 ## License
 
-See repository root. (Add a license before distributing.)
+MIT. See [`LICENSE`](LICENSE).

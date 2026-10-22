@@ -1,7 +1,8 @@
 # Minimal test project
 
 A tiny 3D scene (`main.tscn`: ground, cube, sun, camera) used for the two-editor
-integration tests in `docs/TESTING.md`.
+integration tests in the
+[Testing wiki page](https://github.com/F1dg3tXD/godot-collab/wiki/Testing).
 
 ## Setup
 
