@@ -41,7 +41,7 @@ changes; keep them in sync when behavior changes.
 - All eight original milestones (plugin foundation, ENet session layer, invite
   codes/connectivity, remote cursors/presence, collaborative scene protocol,
   saving, project download, Git presence mode) are implemented and documented.
-- The headless test suite passes: **381 checks, 0 failures**.
+- The headless test suite passes: **397 checks, 0 failures**.
 - Full project file sync (exclusion-policy eligibility, rename/delete, and
   join-time `FILE_SYNC_MANIFEST` catch-up), host-to-client **project-settings
   sync** (`PROJECT_SETTINGS`, `project.godot` is never transferred as a file),
@@ -181,11 +181,21 @@ host-authoritative **live mirror** of the host project under
 `live_<project_name>/`: the first host to register a room uploads its project
 through the ordinary transfer protocol, later clients are replayed that mirror
 state, and live file edits (`FILE_APPLY`/`FILE_REMOVE`/`SCENE_LIST`) are applied
-to it. `CollabRelayProtocol` frames it with a 10-byte `GCRL` header.
+to it. `CollabRelayProtocol` frames it with a 10-byte `GCRL` header (relay protocol
+version `2`, which adds an optional password to `REGISTER`).
 
 The Docker image (`tools/relay_server/`) runs the relay (UDP 45900) **and** the
 Python rendezvous (TCP 9080) together. The rendezvous URL for a relay host is
 derived as `http://<relay-host>:9080` unless explicitly configured.
+
+A relay can require a shared password via the `GODOT_COLLAB_RELAY_PASSWORD`
+environment variable. `CollabSessionManager` sends the value in the `REGISTER`
+frame (from the dock's secret field, held in memory only), and
+`CollabRelayServer` rejects missing/incorrect values before creating or joining a
+room, comparing SHA-256 hashes in constant time. The password is deliberately
+**not** embedded in `gc1`/`gc2` invitation codes, not stored in
+`EditorSettings`, and not stored by the rendezvous service; hosts/clients must
+enter it separately. With no variable the relay stays open as before.
 
 Connectivity state is reported honestly to the dock:
 `UNKNOWN` / `LAN_ONLY` / `DIRECT` / `RELAY`.
@@ -194,12 +204,21 @@ Connectivity state is reported honestly to the dock:
 
 `CollabPresenceService` uses the official editor APIs
 (`_forward_3d_gui_input`, `_forward_canvas_gui_input`,
-`_forward_canvas_draw_over_viewport`, `update_overlays`,
 `EditorInterface.get_editor_viewport_3d` / `get_editor_viewport_2d`,
-`Viewport.get_camera_3d` / `get_canvas_transform`). It:
+`Viewport.get_camera_3d` / `get_final_transform`). It:
 
-- captures mouse movement over the 3D viewport and the 2D view without consuming
-  normal editor input;
+- captures mouse movement over the 3D viewport via `_forward_3d_gui_input`, and
+  over the 2D view by **polling the editor's 2D viewport every frame** from
+  `plugin.gd` (`_sample_local_2d_view`) — canvas input forwarding is not
+  reliably delivered to regular add-ons, so it is kept only as a secondary
+  path. The polling approach is adapted from
+  [GodotTogether](https://github.com/Wolfyxon/GodotTogether). The pointer is
+  read in the embedding `SubViewportContainer`'s local space and mapped to
+  canvas space with the inverse of `viewport.get_final_transform()`
+  (`CollabCursor2DManager.viewport_to_canvas`; the editor's pan/zoom lives in
+  the **global** canvas transform, which `get_final_transform()` includes);
+  selection is limited to a mouse inside the visible container rect;
+- does not consume normal editor input;
 - sends, at ~25 Hz (unreliable) while a session is active, an explicit view
   (`3d`/`2d`), the sender's camera transform and world-space ray (3D) or
   canvas-space position (2D), normalized viewport position, animation state,
@@ -208,19 +227,27 @@ Connectivity state is reported honestly to the dock:
   `grab_file_material`, `grab_file_object`) from the held mouse buttons and the
   active editor drag-and-drop payload;
 - interpolates remote 3D cursors and discards stale state (3 s);
-- draws 2D cursors/usernames on the 2D view overlay (distinct colours);
+- spawns a live 2D cursor per remote 2D participant (`CollabCursor2DManager`):
+  `assets/cursor_2d.tscn` (Node2D + AnimatedSprite2D + username label, distinct
+  colours) is parented into a high-`z_index` container inside the editor's 2D
+  viewport, so it shares the edited scene's canvas space (no serialisation, no
+  Scene-dock entry, no dirty flag), and it is removed when the peer switches to
+  3D/another scene or disconnects;
 - spawns a live 3D `editorNodeVis` marker per remote 3D participant
   (`CollabMarkerManager`): the marker body (`CSGSphere3D` avatar) sits at the
   remote camera and its `AnimatedSprite3D` cursor sits at the ray point playing
   the transmitted animation, so `_cursor_3d.global_position` tracks the remote
   mouse while `marker.position` tracks the remote camera;
-- removes a marker immediately on disconnect, when the peer is in another scene,
-  or when the peer is in the 2D view.
+- removes a 3D marker immediately on disconnect, when the peer is in another
+  scene, or when the peer is in the 2D view.
 
 The 3D cursor is a configurable point along the remote camera ray, not a
-surface-picked hit; do not claim surface accuracy. 2D cursors are mapped through
-the local 2D viewport's canvas transform. Marker labels/size/depth are
-configurable; animation names must match `assets/cursor_sprites.tres`.
+surface-picked hit; do not claim surface accuracy. 2D cursor positions are
+canvas-space positions computed from the sender's viewport pan/zoom, so they line
+up under the receiver's (possibly different) pan/zoom. Marker labels/size/depth
+are configurable; animation names must match `assets/cursor_sprites.tres`.
+The 2D cursor scene and the viewport-polling technique are credited to
+GodotTogether; keep that attribution in the source comments.
 
 ## Scene collaboration
 
@@ -321,7 +348,7 @@ Headless parse smoke (should print nothing):
   | grep -iE "SCRIPT ERROR|Parse Error|Compile Error|Failed to load"
 ```
 
-Headless test suite (expect `381 checks, 0 failures` / `RESULT: PASS`):
+Headless test suite (expect `397 checks, 0 failures` / `RESULT: PASS`):
 
 ```sh
 ~/.apps/Godot/Godot_v4.7.2-stable_linux.x86_64 --headless \

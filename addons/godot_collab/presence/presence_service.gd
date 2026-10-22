@@ -103,14 +103,22 @@ func sample_local_cursor(camera: Camera3D, mouse_pos: Vector2, viewport_size: Ve
 	_local_has_cursor = true
 
 
-## Called by the plugin from _forward_canvas_gui_input on mouse motion.
+## Called by the plugin each frame while the 2D editor view is visible (and from
+## _forward_canvas_gui_input when the engine happens to forward it). The motion
+## timestamp only advances when the pointer actually moves, so a stationary
+## cursor relaxes to the idle animation instead of being reported as hovering.
 func sample_local_cursor_2d(canvas_pos: Vector2, viewport_pos: Vector2, scene_id: String, button_mask: int = 0) -> void:
+	var moved: bool = (
+		_view_mode != CollabConstants.CURSOR_VIEW_2D
+		or not viewport_pos.is_equal_approx(_viewport_2d_pos)
+	)
 	_canvas_pos = canvas_pos
 	_viewport_2d_pos = viewport_pos
 	_local_scene_id = scene_id
 	_button_mask = button_mask
 	_view_mode = CollabConstants.CURSOR_VIEW_2D
-	_last_motion_ms = Time.get_ticks_msec()
+	if moved:
+		_last_motion_ms = Time.get_ticks_msec()
 	_local_has_cursor = true
 
 

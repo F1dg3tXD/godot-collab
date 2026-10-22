@@ -31,14 +31,15 @@ someone maintaining the add-on, not at end users.
 | `CollabLog` | `core/collab_log.gd` | Leveled logging. |
 | `CollabIdentity` | `core/identity.gd` | Engine version and project identity hashing. |
 | `CollabProtocol` | `network/protocol.gd` | Framing (magic + version + type + length), encode/decode, per-type validation. |
-| `CollabRelayProtocol` | `network/relay_protocol.gd` | Relay-level framing (`GCRL`), kinds (register/registered/data/member-join/leave/error/kick), and origin/destination wrapping. |
+| `CollabRelayProtocol` | `network/relay_protocol.gd` | Relay-level framing (`GCRL`, version 2), kinds (register/registered/data/member-join/leave/error/kick), optional relay password, and origin/destination wrapping. |
 | `CollabRelayServer` | `network/relay_server.gd` | Headless room-based ENet relay: assigns app ids, rewrites origins, broadcasts membership. Used by `tools/relay_server/`. |
 | `CollabSessionManager` | `network/session_manager.gd` | Owns the `ENetMultiplayerPeer`, poll loop, reliable/unreliable send, peer tracking. Also speaks the relay (host *and* client connect outbound; application ids abstract away transport ids). |
 | `CollabSessionCoordinator` | `session/session_coordinator.gd` | Handshake, approval, participant registry, cursor relay, routing of scene/save/transfer messages. |
 | `CollabParticipant` / `CollabParticipantRegistry` | `network/participant.gd`, `network/participant_registry.gd` | Participant records and authoritative list. |
-| `CollabPresenceService` | `presence/presence_service.gd` | Samples the local 3D ray / 2D canvas position, sends/relays cursor updates with an animation state, stores remote cursor state, draws the 2D cursors. |
+| `CollabPresenceService` | `presence/presence_service.gd` | Samples the local 3D ray / 2D canvas position, sends/relays cursor updates with an animation state, and feeds remote cursor state. |
 | `CollabCursorState` | `presence/cursor_state.gd` | Per-participant 3D/2D cursor state + interpolation + staleness + animation. |
 | `CollabMarkerManager` | `presence/marker_manager.gd` | Spawns/updates/removes a live 3D `editorNodeVis` marker (camera avatar + animated cursor) per remote participant in the editor viewport. |
+| `CollabCursor2DManager` | `presence/cursor_2d_manager.gd` | Spawns/updates/removes a live `assets/cursor_2d.tscn` cursor per remote 2D participant inside the editor's 2D viewport; maps viewport to canvas space. |
 | `CollabSceneOperations` | `collaboration/scene_operations.gd` | Builds and validates structured scene operations. |
 | `CollabNodeIdMap` | `collaboration/node_id_map.gd` | Stable session-level node IDs ↔ local `Node` mapping. |
 | `CollabDiffWatcher` | `collaboration/diff_watcher.gd` | Per-context debounced snapshot/diff watcher for supported editor changes. |
@@ -70,8 +71,8 @@ plugin.gd ──────────────► CollabSessionCoordinator
    │   └── CollabPresenceService ◄┘  │                          │
    │            │ cursor updates     │                          ▼
    │            ▼                    └────── CollabProtocol (frame/decode/validate)
-   │     _forward_3d_gui_input / _forward_canvas_gui_input
-   │     _forward_canvas_draw_over_viewport
+   │     _forward_3d_gui_input / 2D viewport polling
+   │     (_forward_canvas_gui_input kept as secondary)
     └── CollabSceneSyncService / CollabSaveService / CollabTransferManager / CollabWorkspaceService
 ```
 
@@ -451,15 +452,24 @@ imported or executed by the add-on.
 ## Presence and remote cursors
 
 - Local cursor sampling happens in `EditorPlugin._forward_3d_gui_input` (3D view)
-  and `EditorPlugin._forward_canvas_gui_input` (2D view). The 3D callback
+  and in a per-frame **poll of the 2D editor viewport** (2D view). The 3D callback
   observes `InputEventMouseMotion`, obtains the editor 3D viewport via
   `EditorInterface.get_editor_viewport_3d()` and the provided camera, and builds
-  a world-space ray plus a normalized viewport position. The 2D callback converts
-  the mouse position through the 2D viewport's canvas transform
-  (`EditorInterface.get_editor_viewport_2d()`) into a canvas-space position. Mouse
-  button press/release events only refresh the held-button state so the cursor
-  animation updates without motion. Both callbacks **always** return
-  pass-through, so normal editor interaction is never consumed.
+  a world-space ray plus a normalized viewport position.
+- Why polling for 2D: `_forward_canvas_gui_input` is not reliably delivered to
+  regular add-ons (`set_input_event_forwarding_always_enabled` affects 3D input
+  but not canvas input). `plugin.gd` therefore polls
+  `EditorInterface.get_editor_viewport_2d()` every frame while a session is
+  active and its `SubViewportContainer` is visible. The pointer is taken from
+  the container's local space (bounds-checked against its visible rect) and
+  mapped to canvas space with the inverse of
+  `viewport.get_final_transform()`; the editor's pan/zoom lives in the
+  **global** canvas transform, which that transform includes (plain
+  `get_canvas_transform()` is identity). The approach is adapted from
+  [GodotTogether](https://github.com/Wolfyxon/GodotTogether). The
+  `_forward_canvas_gui_input` override is kept as a secondary path (and for
+  button-state refresh) but cannot be relied on. Both input callbacks
+  **always** return pass-through, so normal editor interaction is never consumed.
 - A `CURSOR_UPDATE` payload carries an explicit `view` (`3d`/`2d`), the sender's
   `scene_id`, an `anim` state and a timestamp. A 3D update also carries the
   camera transform, ray origin/direction and normalized viewport position; a 2D
@@ -472,11 +482,17 @@ imported or executed by the add-on.
   `grab_file_object`, a held mouse button maps to `grab`, recent motion maps to
   `idle_hover`, otherwise `idle`. Animations live in
   `assets/cursor_sprites.tres` (shared by the 3D and 2D cursors).
-- 2D cursors are drawn in `EditorPlugin._forward_canvas_draw_over_viewport`, which
-  calls `CollabPresenceService.draw_overlay_2d`. The remote canvas position is
-  mapped through the local 2D viewport's canvas transform, so cursors line up
-  under the local pan/zoom. Each participant gets a stable distinct colour and an
-  optional username label. Cursors for peers in another scene are skipped.
+- 2D cursors are **live scene nodes**, not an overlay: `CollabCursor2DManager`
+  instances `assets/cursor_2d.tscn` (`CollabCursor2D`, an `AnimatedSprite2D` +
+  label) into a `CollabCursor2D` container parented to the editor's 2D
+  `SubViewport` with a high `z_index`. Because the container shares the edited
+  scene's canvas space, each remote canvas position lines up under the local
+  pan/zoom, and the transmitted animation plays exactly like its 3D counterpart.
+  Cursors are never part of the scene (no serialisation, no Scene-dock entry, no
+  dirty flag). Each participant gets a stable distinct colour and an optional
+  username label. Cursors for peers in another scene are skipped, and all
+  cursors are removed on disconnect. Sprite size is controlled by
+  `cursors/marker_size`; `cursors/show_2d_cursors` hides the whole container.
 - Disconnect clears the participant's cursor immediately.
 - `CollabMarkerManager` renders a **live 3D marker** for every remote participant
   editing in 3D: it instances `assets/editorNodeVis.tscn` (`CollabUserMarker`)
@@ -515,6 +531,15 @@ a short code, in which case the rendezvous entry stores the relay endpoint + roo
 relay Docker image, and the derived rendezvous URL for a relay host is
 `http://<relay-host>:9080` unless overridden.
 
+A relay can additionally require a **shared password**
+(`GODOT_COLLAB_RELAY_PASSWORD` when the relay starts). Hosts and clients type it
+into the dock; `CollabSessionManager` includes it in the relay `REGISTER` frame
+and `CollabRelayServer` rejects a missing/incorrect password before creating or
+joining a room. The password is deliberately *not* part of invitation codes,
+`EditorSettings`, or the rendezvous entry: knowing a room code is not enough to
+use a protected relay. This changed the relay framing to protocol version `2`, so
+all participants (and the relay) must run a matching build.
+
 ### Invitation codes
 
 - `gc1.…` (direct) embeds `host`, `port`, `token`, `project_id`, `mode`.
@@ -537,7 +562,10 @@ room code and a token; the first host to register owns the room. The relay:
 - emits membership events so `CollabSessionManager` can surface them as the same
   `peer_connected` / `peer_disconnected` signals used in direct mode;
 - never interprets application payloads, and by default stores nothing on disk
-  (see the project mirror below).
+  (see the project mirror below);
+- optionally enforces a relay-wide password (`GODOT_COLLAB_RELAY_PASSWORD`),
+  compared as SHA-256 hashes in constant time so rejected peers cannot create
+  rooms or consume workspace/transfer resources.
 
 ### Server-side project mirror
 
@@ -570,9 +598,10 @@ mirror** of the host project under `<dir>/live_<project_name>/`:
 - The relay never applies mirror data back to the host: it is host -> server
   only, and the host remains authoritative for its own files.
 
-`CollabRelayProtocol` frames relay traffic with a 10-byte `GCRL` header
-(`REGISTER`, `REGISTERED`, `DATA`, `MEMBER_JOIN`, `MEMBER_LEAVE`, `ERROR`,
-`KICK`). `DATA` carries a `u32 origin` and `u32 destination` before the wrapped
+`CollabRelayProtocol` (version `2`) frames relay traffic with a 10-byte `GCRL`
+header (`REGISTER`, `REGISTERED`, `DATA`, `MEMBER_JOIN`, `MEMBER_LEAVE`, `ERROR`,
+`KICK`); the `REGISTER` payload carries the optional relay password and is checked
+against the server's SHA-256 hash before any room state changes. `DATA` carries a `u32 origin` and `u32 destination` before the wrapped
 `CollabProtocol` bytes, because every peer is otherwise connected only to the
 relay. `CollabSessionManager` translates between these and its usual send/receive
 API:

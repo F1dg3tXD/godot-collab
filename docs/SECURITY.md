@@ -71,11 +71,21 @@ protect against, and how to configure it safely.
 ## Relay server
 
 - The relay forwards opaque `CollabRelayProtocol` frames between peers in a room.
-  It does not parse application payloads, write to disk, or authenticate peers
-  beyond the room token it was given at registration. Anyone who learns a room
-  code *and* its token can join.
+  It does not parse application payloads or authenticate individual peers beyond
+  the room token it was given at registration. Anyone who learns a room code
+  *and* its token can join (unless the relay is password-protected).
+- **Optional relay password.** When the operator sets
+  `GODOT_COLLAB_RELAY_PASSWORD`, every `REGISTER` frame must carry the matching
+  password or the relay rejects it before creating/joining a room. This prevents
+  strangers from using an open relay and from creating rooms/projects without
+  the secret. The comparison is done on SHA-256 hashes in constant time to avoid
+  leaking the password through string-compare timing. It is an access gate, not
+  encryption: the password travels over plaintext ENet/UDP, is held in memory by
+  the editor (never `EditorSettings`), and is deliberately **not** embedded in
+  invitation codes or stored by the rendezvous — share it out of band.
 - Relay traffic is plain ENet/UDP and is **not encrypted**; add WireGuard/SSH or
-  another tunnel if confidentiality is required.
+  another tunnel if confidentiality is required. A relay password does not change
+  this.
 
 ## Recommended safe configuration
 

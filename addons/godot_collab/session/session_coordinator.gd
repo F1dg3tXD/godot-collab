@@ -79,6 +79,7 @@ var relay_enabled: bool = false
 var relay_address: String = ""
 var relay_port: int = 0
 var relay_room: String = ""
+var relay_password: String = ""
 
 var get_project_id: Callable = Callable()
 var get_scene_id: Callable = Callable()
@@ -154,7 +155,7 @@ func join(address: String, port: int, token: String = "") -> Error:
 ## Hosts a session through a dedicated relay. [param room] is a short,
 ## human-shareable code; [param token] authenticates joining clients. The relay
 ## forwards traffic so neither side needs an inbound-reachable port.
-func start_host_via_relay(relay_host: String, relay_port_arg: int, room: String, token: String, max_peers: int, mode: int, p_approve_joins: bool, p_project_name: String = "") -> Error:
+func start_host_via_relay(relay_host: String, relay_port_arg: int, room: String, token: String, max_peers: int, mode: int, p_approve_joins: bool, p_project_name: String = "", password: String = "") -> Error:
 	workspace_mode = mode
 	approve_joins = p_approve_joins
 	host_port = relay_port_arg
@@ -164,8 +165,9 @@ func start_host_via_relay(relay_host: String, relay_port_arg: int, room: String,
 	relay_address = relay_host
 	relay_port = relay_port_arg
 	relay_room = room
+	relay_password = password
 	session_manager.relay_project_name = p_project_name
-	var err: Error = session_manager.host_via_relay(relay_host, relay_port_arg, room, token, max_peers)
+	var err: Error = session_manager.host_via_relay(relay_host, relay_port_arg, room, token, max_peers, 10, password)
 	if err != OK:
 		relay_enabled = false
 		return err
@@ -185,14 +187,15 @@ func start_host_via_relay(relay_host: String, relay_port_arg: int, room: String,
 
 ## Joins a relay-hosted session. Reaches the host through the relay, so it works
 ## behind NAT/CGNAT without port forwarding.
-func join_via_relay(relay_host: String, relay_port_arg: int, room: String, token: String, mode: int) -> Error:
+func join_via_relay(relay_host: String, relay_port_arg: int, room: String, token: String, mode: int, password: String = "") -> Error:
 	workspace_mode = mode
 	session_token = token
 	relay_enabled = true
 	relay_address = relay_host
 	relay_port = relay_port_arg
 	relay_room = room
-	var err: Error = session_manager.join_via_relay(relay_host, relay_port_arg, room, token)
+	relay_password = password
+	var err: Error = session_manager.join_via_relay(relay_host, relay_port_arg, room, token, 10, password)
 	if err != OK:
 		relay_enabled = false
 		return err
@@ -213,6 +216,7 @@ func stop(reason: String = "disconnected") -> void:
 	relay_address = ""
 	relay_port = 0
 	relay_room = ""
+	relay_password = ""
 	session_stopped.emit(reason)
 
 

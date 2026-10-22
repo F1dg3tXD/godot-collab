@@ -14,6 +14,11 @@
 ##
 ## The relay is explicitly *not* an application server: it never parses scene,
 ## transfer or workspace payloads, only wraps and routes bytes.
+##
+## When started with a password, every REGISTER frame must carry the same
+## password or it is rejected before a room can be created or joined. This keeps
+## an open relay from being used by unrelated clients and makes room/project
+## creation impossible without the operator's secret.
 class_name CollabRelayServer
 extends Node
 
@@ -39,6 +44,11 @@ var _logs: CollabLog = null
 var _projects_dir: String = ""
 ## Deferred frames (e.g. a mirror snapshot replayed to a joining client).
 var _outbox: Array = []
+## Rejected peers are disconnected slightly later so the reliable ERROR frame is
+## flushed first (an immediate disconnect can race the client's packet drain).
+var _pending_rejects: Array = [] # [{enet_id: int, due_ms: int}]
+## SHA-256 of the configured relay password (empty = no password required).
+var _password_hash: String = ""
 
 
 func _init(logs: CollabLog = null) -> void:
@@ -53,10 +63,11 @@ func is_running() -> bool:
 	return _running
 
 
-func start(port: int, max_clients: int = DEFAULT_MAX_CLIENTS, bind_address: String = "*", projects_dir: String = "") -> Error:
+func start(port: int, max_clients: int = DEFAULT_MAX_CLIENTS, bind_address: String = "*", projects_dir: String = "", password: String = "") -> Error:
 	if _running:
 		return ERR_ALREADY_IN_USE
 	_projects_dir = projects_dir
+	set_password(password)
 	if not _projects_dir.is_empty():
 		DirAccess.make_dir_recursive_absolute(_projects_dir)
 	var peer := ENetMultiplayerPeer.new()
@@ -71,6 +82,10 @@ func start(port: int, max_clients: int = DEFAULT_MAX_CLIENTS, bind_address: Stri
 	_peer = peer
 	_running = true
 	_log_info("Relay listening on UDP %d (max %d clients)." % [port, max_clients])
+	if _password_hash.is_empty():
+		_log_info("Relay password protection is disabled.")
+	else:
+		_log_info("Relay password protection is enabled.")
 	if _projects_dir.is_empty():
 		_log_info("Relay project mirroring is disabled.")
 	else:
@@ -92,8 +107,17 @@ func stop() -> void:
 	_mirrors.clear()
 	_app_to_enet.clear()
 	_outbox.clear()
+	_pending_rejects.clear()
 	_next_app_id = 2
 	_running = false
+
+
+func set_password(password: String) -> void:
+	_password_hash = "" if password.is_empty() else password.sha256_text()
+
+
+func is_password_protected() -> bool:
+	return not _password_hash.is_empty()
 
 
 func poll() -> void:
@@ -105,6 +129,7 @@ func poll() -> void:
 		var raw: PackedByteArray = _peer.get_packet()
 		_handle(from_peer, raw)
 	_flush_outbox()
+	_flush_rejects()
 
 
 func _flush_outbox() -> void:
@@ -119,6 +144,25 @@ func _flush_outbox() -> void:
 			continue
 		_send_to_enet(int(entry["enet_id"]), entry["bytes"])
 		sent += 1
+
+
+func _flush_rejects() -> void:
+	if _pending_rejects.is_empty() or _peer == null:
+		return
+	var now: int = Time.get_ticks_msec()
+	var remaining: Array = []
+	for entry in _pending_rejects:
+		var enet_id: int = int(entry["enet_id"])
+		if _peer.get_peer(enet_id) == null:
+			continue
+		if _peers.has(enet_id):
+			# The peer registered on a later frame; do not punish it now.
+			continue
+		if now >= int(entry["due_ms"]):
+			_peer.disconnect_peer(enet_id, false)
+			continue
+		remaining.append(entry)
+	_pending_rejects = remaining
 
 
 func room_count() -> int:
@@ -145,6 +189,10 @@ func _handle(enet_id: int, raw: PackedByteArray) -> void:
 
 func _handle_register(enet_id: int, decoded: Dictionary) -> void:
 	if _peers.has(enet_id):
+		return
+	if not _password_matches(str(decoded.get("password", ""))):
+		_log_warn("Relay rejected %d: password required or incorrect." % enet_id)
+		_reject(enet_id, "Relay password is missing or incorrect. Set the same relay password in the add-on.")
 		return
 	var room: String = str(decoded.get("room", "")).strip_edges()
 	if room.is_empty() or room.length() > 64:
@@ -273,10 +321,28 @@ func _drop_member(room: String, app_id: int) -> void:
 		(_rooms[room]["members"] as Dictionary).erase(app_id)
 
 
+## Compares the presented password against the configured hash in constant
+## time. Hashing both sides keeps the comparison length fixed and avoids
+## leaking the secret's length or prefix through an early-exit string compare.
+func _password_matches(password: String) -> bool:
+	if _password_hash.is_empty():
+		return true
+	var presented: String = password.sha256_text()
+	var diff: int = 0
+	for i in _password_hash.length():
+		diff |= _password_hash.unicode_at(i) ^ presented.unicode_at(i)
+	return diff == 0
+
+
 func _reject(enet_id: int, message: String) -> void:
 	_send_to_enet(enet_id, CollabRelayProtocol.encode_error(message))
-	if _peer != null:
-		_peer.disconnect_peer(enet_id, false)
+	if _peer == null:
+		return
+	for entry in _pending_rejects:
+		if int(entry["enet_id"]) == enet_id:
+			return
+	# Give the reliable ERROR frame time to leave before dropping the peer.
+	_pending_rejects.append({"enet_id": enet_id, "due_ms": Time.get_ticks_msec() + 250})
 
 
 # ---------------------------------------------------------------------------

@@ -54,8 +54,29 @@ Options (after `--`):
 | `--projects-dir <dir>` | `tools/relay_server/projects` | Live project mirror directory (pass `""` to disable) |
 | `--help` | | Show usage |
 
+Environment: `GODOT_COLLAB_RELAY_PASSWORD` (optional) protects the relay with a
+shared password.
+
 Open the chosen UDP port in the relay host's firewall. The relay does **not**
 need to be reachable from the editors on any port other than this one.
+
+### Requiring a password
+
+Set `GODOT_COLLAB_RELAY_PASSWORD` to require every host and client to present the
+same shared secret in the add-on's **relay password** field:
+
+```sh
+GODOT_COLLAB_RELAY_PASSWORD='choose-a-secret' \
+  GODOT=/path/to/godot tools/relay_server/run.sh --port 45900
+```
+
+`relayctl.sh`, `run.sh`, and the Docker entry point all inherit the variable.
+The relay hashes it (SHA-256) and compares in constant time; a missing or wrong
+password is rejected before a room can be created or joined. The value is never
+logged, written to `EditorSettings`, or embedded in `gc1`/`gc2` invitation codes,
+so share it with collaborators out of band. Without the variable the relay
+remains open, as before. Password support uses relay protocol version `2`; every
+participant must run a matching add-on build.
 
 ### Running in the background (relay + rendezvous + mirror)
 
@@ -93,6 +114,9 @@ Or with Compose (from `tools/relay_server/`):
 
 ```sh
 docker compose up -d --build
+
+# Require a shared password (Compose passes the host environment through):
+GODOT_COLLAB_RELAY_PASSWORD='choose-a-secret' docker compose up -d --build
 ```
 
 The container publishes `45900/udp` (relay) and `9080/tcp` (rendezvous). Publish
@@ -111,6 +135,7 @@ privacy (see the encryption note above).
 | `RELAY_MAX_CLIENTS` | `64` | Max ENet clients on the relay |
 | `RENDEZVOUS_PORT` | `9080` | Rendezvous HTTP port |
 | `RENDEZVOUS_BIND` | `0.0.0.0` | Rendezvous bind address |
+| `GODOT_COLLAB_RELAY_PASSWORD` | *(unset)* | Require this shared password from every host/client |
 
 Command-line arguments (for example `--port 45900`) are forwarded to the relay.
 Either service stopping shuts the container down.
@@ -121,7 +146,8 @@ Relay mode is the default hosting path (uncheck **Use a relay server** only for
 direct LAN hosting).
 
 1. In the dock, make sure **Use a relay server** is ticked and enter the relay
-   address (`host` or `host:port`).
+   address (`host` or `host:port`). If the relay is password-protected, also
+   enter its password in the **relay password** field on both sides.
 2. Click **Host**. The dock generates a room, a session token, and a `gc2.…`
    invitation that embeds the relay endpoint, the room, the token, and the
    rendezvous URL. If the **short invite code** option is enabled and the
@@ -162,8 +188,11 @@ Run it directly with `python3 tools/rendezvous_server/rendezvous_server.py
   restart). There is no persistence.
 - A room accepts one host and up to `MAX_ROOM_MEMBERS` (32) participants.
 - Only the host may kick a participant.
-- There is no relay authentication beyond the room token; anyone who learns a
-  room code *and* its token can join. Treat invitations as temporary credentials.
+- Authentication is the room token plus, optionally, the shared relay password
+  (`GODOT_COLLAB_RELAY_PASSWORD`). Without a password, anyone who learns a room
+  code *and* its token can join. Treat invitations as temporary credentials, and
+  use a password on any relay reachable from the public internet. Neither is
+  encryption and neither identifies individual users.
 
 See [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) and
 [`docs/LIMITATIONS.md`](../../docs/LIMITATIONS.md) for the wider picture.

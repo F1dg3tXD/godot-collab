@@ -16,7 +16,7 @@ class_name CollabRelayProtocol
 extends RefCounted
 
 static var MAGIC: PackedByteArray = PackedByteArray([0x47, 0x43, 0x52, 0x4C]) # "GCRL"
-const VERSION: int = 1
+const VERSION: int = 2
 const HEADER_SIZE: int = 10
 const MAX_PAYLOAD: int = CollabConstants.MAX_PACKET_PAYLOAD + 64
 
@@ -42,8 +42,10 @@ enum Role {
 const HOST_APP_ID: int = 1
 
 
-static func encode_register(room: String, role: int, token: String, max_peers: int, project_name: String = "") -> PackedByteArray:
-	return _frame(Kind.REGISTER, var_to_bytes({"room": room, "role": role, "token": token, "max_peers": max_peers, "project_name": project_name}))
+## [param password] must match the relay's configured password when the server
+## operator has set one (`GODOT_COLLAB_RELAY_PASSWORD`); it is empty otherwise.
+static func encode_register(room: String, role: int, token: String, max_peers: int, project_name: String = "", password: String = "") -> PackedByteArray:
+	return _frame(Kind.REGISTER, var_to_bytes({"room": room, "role": role, "token": token, "max_peers": max_peers, "project_name": project_name, "password": password}))
 
 
 static func encode_registered(peer_id: int, host_id: int) -> PackedByteArray:
@@ -78,8 +80,8 @@ static func encode_data(origin: int, dest: int, app_bytes: PackedByteArray) -> P
 
 
 ## Decode result:
-## { ok, error, kind, room, role, token, max_peers, peer_id, host_id, origin,
-##   dest, data }
+## { ok, error, kind, room, role, token, max_peers, project_name, password,
+##   peer_id, host_id, origin, dest, data }
 static func decode(packet: PackedByteArray) -> Dictionary:
 	var result: Dictionary = {"ok": false, "error": "empty", "kind": Kind.INVALID, "data": PackedByteArray()}
 	if packet.size() < HEADER_SIZE:
@@ -123,6 +125,7 @@ static func decode(packet: PackedByteArray) -> Dictionary:
 			result["token"] = str((payload as Dictionary).get("token", ""))
 			result["max_peers"] = int((payload as Dictionary).get("max_peers", 0))
 			result["project_name"] = str((payload as Dictionary).get("project_name", ""))
+			result["password"] = str((payload as Dictionary).get("password", ""))
 		Kind.REGISTERED:
 			result["peer_id"] = int((payload as Dictionary).get("peer_id", 0))
 			result["host_id"] = int((payload as Dictionary).get("host_id", HOST_APP_ID))

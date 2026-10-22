@@ -4,6 +4,11 @@
 ## so they share the edited scene's canvas transform while never being part of the
 ## scene (they are not serialised, never show in the Scene dock and never mark the
 ## scene dirty). Peers editing in the 3D view are drawn by [CollabMarkerManager].
+##
+## The live-cursor scene ([code]assets/cursor_2d.tscn[/code]) and this approach
+## are adapted from GodotTogether (https://github.com/Wolfyxon/GodotTogether),
+## which places participant avatars directly in the editor's 2D viewport and
+## polls its mouse position instead of relying on canvas input forwarding.
 class_name CollabCursor2DManager
 extends Node
 
@@ -165,6 +170,26 @@ func _get_viewport() -> SubViewport:
 	if not _viewport_provider.is_valid():
 		return null
 	return _viewport_provider.call() as SubViewport
+
+
+## Converts a position in the embedding [SubViewportContainer]'s local space to
+## the canvas space the edited scene (and therefore [CollabCursor2D]) lives in.
+## The editor stores its 2D pan/zoom in the viewport's global canvas transform,
+## which [method Viewport.get_final_transform] includes (unlike
+## [method Viewport.get_canvas_transform]); dividing by the container's stretch
+## shrink keeps this correct if the editor ever renders the 2D view scaled down.
+## Credit: GodotTogether, https://github.com/Wolfyxon/GodotTogether.
+static func viewport_to_canvas(viewport: Viewport, viewport_pos: Vector2) -> Vector2:
+	if viewport == null:
+		return viewport_pos
+	var local_pos: Vector2 = viewport_pos
+	var container := viewport.get_parent() as SubViewportContainer
+	if container != null and container.is_stretch_enabled() and container.get_stretch_shrink() > 1:
+		local_pos /= float(container.get_stretch_shrink())
+	var final_transform: Transform2D = viewport.get_final_transform()
+	if final_transform.determinant() == 0.0:
+		return viewport_pos
+	return final_transform.affine_inverse() * local_pos
 
 
 # --- test helpers ---------------------------------------------------------

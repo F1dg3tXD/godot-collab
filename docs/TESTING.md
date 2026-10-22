@@ -13,7 +13,7 @@ cd /path/to/godot-colab
 - Exit code `0` and a final `RESULT: PASS` mean all checks passed.
 - Exit code `1` with `RESULT: FAIL` means at least one check failed; each failure
   is printed individually.
-- The suite (currently **381 checks**) covers: protocol framing/validation (bad
+- The suite (currently **397 checks**) covers: protocol framing/validation (bad
   magic, truncated packets, oversized payloads, non-dictionary payloads, the
   `CURSOR_UPDATE` `3d`/`2d` view shapes, and the
   workspace message types `WORKSPACE_REQUEST`/`WORKSPACE_RESULT`/`FILE_APPLY`/
@@ -65,7 +65,10 @@ cd /path/to/godot-colab
   `CollabRelayServer`, has a host and a client register to one room, and asserts
   that registration assigns ids, that a HELLO is routed host→client via the relay,
   that a cursor packet is relayed, and that a host departure disconnects the
-  client. A companion `_test_relay_token_rejection` asserts a client with a bad
+  client. A companion `_test_relay_password` starts a relay with a password and
+  verifies that a wrong/missing password is rejected before room creation while
+  matching host and client registrations succeed. A companion
+  `_test_relay_token_rejection` asserts a client with a bad
   room token is rejected with a clear error. **Workspace convergence** is covered
   by `_test_workspace_rename_delete_loopback` (rename/delete propagation),
   `_test_workspace_join_catchup` (a peer admitted after files exist receives the
@@ -153,8 +156,10 @@ instances, enable **Godot Collab** in each, and run through the checks:
    3D `editorNodeVis` avatar for Alice with her animated cursor sprite at the ray
    point (and vice-versa). The sprite switches between idle/hover/grab states as
    Alice moves, clicks and drags files from the FileSystem dock. Alice switching
-   to the 2D view instead shows a 2D canvas cursor on Bob's 2D view (no 3D body).
-   Disconnect Alice: the avatar and the 2D cursor disappear immediately.
+   to the 2D view instead shows her live 2D cursor (`cursor_2d.tscn`) on Bob's 2D
+   view (no 3D body), at the same scene position even if Bob pans/zooms, playing
+   the idle/hover/grab animations. Disconnect Alice: the avatar and the 2D cursor
+   disappear immediately.
 5. **Normal editor controls still work.** Orbit/pan/zoom and selection in the 3D
    viewport behave normally on both sides.
 6. **Incompatible project/scene warning.** Open a different scene in Bob (or
@@ -290,6 +295,13 @@ instances, enable **Godot Collab** in each, and run through the checks:
     tools/relay_server/relayctl.sh restart
     tools/relay_server/relayctl.sh stop
     ```
+
+    To exercise the optional relay password, start the relay with
+    `GODOT_COLLAB_RELAY_PASSWORD=relay-secret ...` and enter `relay-secret` in
+    the dock's **relay password** field on both editors. Verify a session with a
+    blank/wrong password is refused with a password error from the relay, and
+    that the correct password connects. The password must not appear in the
+    invitation code or in `EditorSettings`.
 
     On editor A, tick **Use a relay server** (on by default), enter `127.0.0.1`
     (or `127.0.0.1:45900`), and click **Host**. The dock should report a relay

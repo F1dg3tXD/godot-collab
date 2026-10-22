@@ -11,6 +11,9 @@ services:
       RENDEZVOUS_PORT: "9080"
       # Where the relay keeps the host-authoritative live project mirrors.
       MIRROR_DIR: "/relay/tools/relay_server/projects"
+      # Optional: require this shared secret from every host/client. Set it in
+      # the host environment (or a .env file): GODOT_COLLAB_RELAY_PASSWORD=...
+      GODOT_COLLAB_RELAY_PASSWORD: "${GODOT_COLLAB_RELAY_PASSWORD:-}"
     ports:
       - "45900:45900/udp"
       - "9080:9080/tcp"

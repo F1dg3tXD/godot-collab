@@ -35,8 +35,7 @@ are listed explicitly so nothing here is mistaken for working functionality.
   `ProjectSettings`, dangling `res://` references and renderer keys skipped). It
   passes (see [`TESTING.md`](TESTING.md)).
 - The interactive editor behaviours (dock UI, top-toolbar buttons, remote cursor
-  drawing, `_forward_3d_gui_input` / `_forward_canvas_gui_input` /
-  `_forward_canvas_draw_over_viewport`, scene
+  drawing, `_forward_3d_gui_input` and the 2D viewport poll, scene
   editing, **Ctrl+S shared save**, project download, approval prompts) require
   **two interactive Godot editor instances** and have a documented manual
   procedure but are **not** asserted by an automated GUI test. In particular the
@@ -57,6 +56,17 @@ are listed explicitly so nothing here is mistaken for working functionality.
   real internet relay or a real NAT. Relay mode is the **default** hosting path;
   if no relay address is configured the host falls back to a direct session with a
   warning, and direct LAN hosting is still available (uncheck *Use a relay server*).
+- **Relay passwords are optional and coarse-grained.** Setting
+  `GODOT_COLLAB_RELAY_PASSWORD` on the relay requires every host and client to
+  enter the same password in the dock; the check is enforced only at `REGISTER`,
+  over plaintext ENet/UDP (so it is anti-abuse, not confidentiality), and there is
+  no per-user identity, rotation, or audit trail. The password is never stored in
+  `EditorSettings` or embedded in invitation codes, so it must be shared
+  separately and re-entered after an editor restart. Protected relays use relay
+  protocol v2; peers running an older build cannot register.
+- The relay password is checked when a peer registers. A peer that already
+  registered before the operator changed the password keeps its room until it
+  disconnects; changing the password requires restarting the relay.
 - The **relay project mirror** (opt-in via `--projects-dir`) is host-authoritative
   and loopback-tested only. Files above `MAX_WORKSPACE_FILE_BYTES` (2 MiB) and
   content beyond `MAX_MIRROR_FILES` (20000) / the pull caps are not mirrored;
@@ -187,8 +197,12 @@ are listed explicitly so nothing here is mistaken for working functionality.
   Surface/object "hover" (as opposed to recent motion) is not detected, and a
   drag started from an editor panel that does not expose its payload is shown as
   a plain `grab`.
-- The 2D cursor is drawn on the overlay of the currently focused 2D view; if the
-  editor has no 2D view visible, remote 2D cursors are simply not painted.
+- 2D cursors are only produced while the editor's 2D view is the visible main
+  screen: the add-on polls that viewport each frame (regular add-ons do not
+  receive canvas input forwarding), so when the 3D/Script screens are active the
+  last 2D position simply goes stale. The rendered cursor is a scene node in the
+  2D view's canvas space; a peer whose view is scrolled far away may see it
+  off-screen until they pan. Cursor sprites are cosmetic and never surface-picked.
 
 ## Saving
 

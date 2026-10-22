@@ -26,6 +26,11 @@
 ## file changes, and replays the stored state to clients that join afterwards.
 ## Pass `--projects-dir ""` to disable mirroring and keep the relay purely
 ## in-memory.
+##
+## Set `GODOT_COLLAB_RELAY_PASSWORD` to require a password on every session:
+## hosts and clients must enter the same password in the add-on before they can
+## register a room. Without the variable (or with an empty value) the relay
+## accepts anyone, as before. The value is never printed or stored.
 extends SceneTree
 
 var _server: CollabRelayServer = null
@@ -44,9 +49,10 @@ func _init() -> void:
 	var max_clients: int = int(args.get("max-clients", CollabRelayServer.DEFAULT_MAX_CLIENTS))
 	var bind_address: String = str(args.get("bind", "*"))
 	var projects_dir: String = str(args.get("projects-dir", _default_projects_dir()))
+	var password: String = OS.get_environment("GODOT_COLLAB_RELAY_PASSWORD")
 
 	_server = CollabRelayServer.new(_logs)
-	var err: Error = _server.start(port, max_clients, bind_address, projects_dir)
+	var err: Error = _server.start(port, max_clients, bind_address, projects_dir, password)
 	if err != OK:
 		printerr("Relay failed to start on UDP %d: %s" % [port, error_string(err)])
 		quit(1)
@@ -104,6 +110,9 @@ func _usage() -> void:
 	print("  --projects-dir <d> Directory for host project mirrors (default %s)" % _default_projects_dir())
 	print("                     Pass \"\" to disable mirroring.")
 	print("  --help             Show this help")
+	print("")
+	print("Environment:")
+	print("  GODOT_COLLAB_RELAY_PASSWORD  Require hosts/clients to supply this password.")
 
 
 func _default_projects_dir() -> String:

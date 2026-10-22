@@ -39,6 +39,7 @@ var _mode_option: OptionButton
 var _rendezvous_check: CheckBox
 var _relay_check: CheckBox
 var _relay_address_edit: LineEdit
+var _relay_password_edit: LineEdit
 var _approve_check: CheckBox
 var _status_label: Label
 var _connectivity_label: Label
@@ -164,6 +165,12 @@ func _build() -> void:
 	_relay_address_edit.placeholder_text = "Relay address: host or host:port (default port %d)" % CollabConstants.DEFAULT_RELAY_PORT
 	_relay_address_edit.tooltip_text = "Address of the bundled relay+rendezvous server (see tools/relay_server)."
 	session_box.add_child(_relay_address_edit)
+
+	_relay_password_edit = LineEdit.new()
+	_relay_password_edit.secret = true
+	_relay_password_edit.placeholder_text = "Relay password (leave blank if the relay has none)"
+	_relay_password_edit.tooltip_text = "Required only when the relay operator set GODOT_COLLAB_RELAY_PASSWORD. Host and every client must enter the same password. It is kept in memory for this editor session and is never written to disk or embedded in invitation codes."
+	session_box.add_child(_relay_password_edit)
 	_update_relay_controls()
 
 	_approve_check = CheckBox.new()
@@ -172,6 +179,7 @@ func _build() -> void:
 
 	session_box.add_child(_hint("Host, Join, Copy Code, Request Snapshot and Disconnect are in the top toolbar."))
 	session_box.add_child(_hint("Relay mode: the invitation embeds the relay endpoint + room, so joining works without a reachable host port. A long code also embeds the rendezvous URL, so pasting it sets the client up for short codes."))
+	session_box.add_child(_hint("If the relay requires a password, enter it above on both the host and every client; it is never included in invitation codes."))
 	session_box.add_child(_hint("Advanced: uncheck relay to host directly on a LAN (a reachable host port is required)."))
 
 	var invite_box := _section("Invitation code")
@@ -416,14 +424,25 @@ func _on_host_pressed() -> void:
 	host_requested.emit(username, port, mode, use_rendezvous, use_relay)
 
 
-## Enables/disables the relay address field. Rendezvous (short codes) can be
-## combined with relay mode, so it is not toggled here.
+## Enables/disables the relay address and password fields. Rendezvous (short
+## codes) can be combined with relay mode, so it is not toggled here.
 func _update_relay_controls() -> void:
 	if _relay_address_edit == null:
 		return
 	var relay: bool = _relay_check.button_pressed
 	_relay_address_edit.editable = relay
 	_relay_address_edit.visible = relay
+	if _relay_password_edit != null:
+		_relay_password_edit.editable = relay
+		_relay_password_edit.visible = relay
+
+
+## The operator's relay password, if one is needed. Deliberately not persisted in
+## [EditorSettings]: it is a shared server secret, not a per-project preference.
+func relay_password() -> String:
+	if _relay_password_edit == null:
+		return ""
+	return _relay_password_edit.text.strip_edges()
 
 
 ## Reflects relay settings pushed by the plugin (for example after a client

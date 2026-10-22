@@ -213,6 +213,7 @@ func _process(delta: float) -> void:
 	_workspace.poll()
 	_transfer.poll()
 	if _coordinator.session_manager.is_active():
+		_sample_local_2d_view()
 		_markers.poll()
 		_cursor_2d.poll()
 		_presence.tick_local()
@@ -339,7 +340,8 @@ func _host_via_relay(mode: int, max_peers: int, use_rendezvous: bool) -> void:
 	var relay_port: int = int(endpoint["port"])
 	var room: String = CollabInviteCode.generate_short_code()
 	var token: String = _random_token()
-	var err: Error = _coordinator.start_host_via_relay(relay_host, relay_port, room, token, max_peers, mode, _coordinator.approve_joins, _project_name())
+	var password: String = _relay_password()
+	var err: Error = _coordinator.start_host_via_relay(relay_host, relay_port, room, token, max_peers, mode, _coordinator.approve_joins, _project_name(), password)
 	if err != OK:
 		_dock.push_message("Failed to start relay session: %s" % error_string(err), true)
 		return
@@ -482,14 +484,14 @@ func _on_join_requested(invite: String) -> void:
 			if not rendezvous_url.is_empty():
 				_dock.set_rendezvous_url(rendezvous_url)
 				_dock.push_message("Configured rendezvous service from the invitation; short codes will work.", false)
-		_join_relay(host, port, str(parsed.get("room", "")), token, int(parsed.get("mode", CollabConstants.WorkspaceMode.HOST_WORKSPACE)))
+		_join_relay(host, port, str(parsed.get("room", "")), token, int(parsed.get("mode", CollabConstants.WorkspaceMode.HOST_WORKSPACE)), _relay_password())
 		return
 	_join_endpoint(host, port, token, int(parsed.get("mode", CollabConstants.WorkspaceMode.HOST_WORKSPACE)))
 
 
 ## Joins a session through a relay server using the endpoint and room embedded in
 ## a `gc2.` invitation.
-func _join_relay(host: String, port: int, room: String, token: String, mode: int) -> void:
+func _join_relay(host: String, port: int, room: String, token: String, mode: int, password: String = "") -> void:
 	if host.is_empty() or port <= 0 or room.is_empty():
 		_dock.push_message("Invalid relay invitation (missing endpoint or room).", true)
 		return
@@ -497,7 +499,7 @@ func _join_relay(host: String, port: int, room: String, token: String, mode: int
 	_dock.set_connection_status(CollabConstants.ConnectionState.CONNECTING, "Joining relay room %s" % room)
 	_dock.set_connectivity(CollabConstants.ConnectivityState.RELAY, "relay %s:%d, room %s" % [host, port, room])
 	_dock.push_message("Joining relay room %s via %s:%d..." % [room, host, port], false)
-	var err: Error = _coordinator.join_via_relay(host, port, room, token, mode)
+	var err: Error = _coordinator.join_via_relay(host, port, room, token, mode, password)
 	if err != OK:
 		_dock.set_connection_status(CollabConstants.ConnectionState.DISCONNECTED, "Not connected")
 		_dock.push_message("Failed to reach relay %s:%d: %s" % [host, port, error_string(err)], true)
@@ -516,9 +518,18 @@ func _on_rendezvous_lookup(code: String, ok: bool, data: Dictionary, error: Stri
 			int(data.get("relay_port", 0)),
 			str(data.get("room", "")),
 			str(data.get("token", "")),
-			int(data.get("mode", CollabConstants.WorkspaceMode.HOST_WORKSPACE)))
+			int(data.get("mode", CollabConstants.WorkspaceMode.HOST_WORKSPACE)),
+			_relay_password())
 		return
 	_join_endpoint(str(data.get("host", "")), int(data.get("port", 0)), str(data.get("token", "")), int(data.get("mode", CollabConstants.WorkspaceMode.HOST_WORKSPACE)))
+
+
+## The relay password currently entered in the dock (empty when the relay does
+## not require one). Never persisted and never embedded in invitation codes.
+func _relay_password() -> String:
+	if _dock == null:
+		return ""
+	return _dock.relay_password()
 
 
 func _join_endpoint(host: String, port: int, token: String, mode: int) -> void:
@@ -1058,6 +1069,12 @@ func _forward_3d_gui_input(viewport_camera: Camera3D, event: InputEvent) -> int:
 
 ## Observes mouse motion over the 2D editor view to derive the local 2D cursor.
 ## Always returns false so normal editor interaction is untouched.
+##
+## The engine only forwards canvas input to plugins registered as "over"
+## editors, so regular add-ons rarely see this callback at all; the reliable
+## path is [_sample_local_2d_view], polled from [_process]. This override is kept
+## for the cases where the callback does fire. The viewport-polling approach is
+## adapted from GodotTogether (https://github.com/Wolfyxon/GodotTogether).
 func _forward_canvas_gui_input(event: InputEvent) -> bool:
 	if _presence == null or _coordinator == null:
 		return false
@@ -1072,10 +1089,44 @@ func _forward_canvas_gui_input(event: InputEvent) -> bool:
 	var viewport_2d: SubViewport = _editor_viewport_2d()
 	if viewport_2d == null:
 		return false
-	var canvas_pos: Vector2 = viewport_2d.get_canvas_transform().affine_inverse() * motion.position
-	var normalized: Vector2 = Vector2(
-		clampf(motion.position.x / maxf(1.0, float(viewport_2d.size.x)), 0.0, 1.0),
-		clampf(motion.position.y / maxf(1.0, float(viewport_2d.size.y)), 0.0, 1.0)
-	)
-	_presence.sample_local_cursor_2d(canvas_pos, normalized, _attached_scene_id, motion.button_mask)
+	_feed_local_2d_sample(viewport_2d, motion.position, motion.button_mask)
 	return false
+
+
+## Polls the editor's 2D view every frame while a session is active. This is the
+## primary 2D-cursor path: unlike 3D input forwarding (which is also enabled for
+## regular plugins via [method EditorPlugin.set_input_event_forwarding_always_enabled]),
+## canvas input forwarding only reaches plugins the editor considers part of its
+## "over" editor list. Polling the viewport is what GodotTogether
+## (https://github.com/Wolfyxon/GodotTogether) does, and it works for any plugin.
+## The cursor rendered on the receiving side is our own
+## [code]assets/cursor_2d.tscn[/code].
+func _sample_local_2d_view() -> void:
+	if _presence == null or _editor == null:
+		return
+	var viewport_2d: SubViewport = _editor_viewport_2d()
+	if viewport_2d == null:
+		return
+	var container: Control = viewport_2d.get_parent() as Control
+	if container == null or not container.is_visible_in_tree():
+		return
+	if viewport_2d.size.x <= 0.0 or viewport_2d.size.y <= 0.0:
+		return
+	var local_pos: Vector2 = container.get_local_mouse_position()
+	if not Rect2(Vector2.ZERO, container.size).has_point(local_pos):
+		return
+	_feed_local_2d_sample(viewport_2d, local_pos, Input.get_mouse_button_mask())
+
+
+## [param local_pos] is in the embedding [SubViewportContainer]'s local space,
+## which is also the space incoming [method EditorPlugin._forward_canvas_gui_input]
+## events use (the editor's canvas input Control overlays the container).
+func _feed_local_2d_sample(viewport_2d: SubViewport, local_pos: Vector2, button_mask: int) -> void:
+	var canvas_pos: Vector2 = CollabCursor2DManager.viewport_to_canvas(viewport_2d, local_pos)
+	var container := viewport_2d.get_parent() as Control
+	var extent: Vector2 = container.size if container != null else viewport_2d.size
+	var normalized: Vector2 = Vector2(
+		clampf(local_pos.x / maxf(1.0, extent.x), 0.0, 1.0),
+		clampf(local_pos.y / maxf(1.0, extent.y), 0.0, 1.0)
+	)
+	_presence.sample_local_cursor_2d(canvas_pos, normalized, _attached_scene_id, button_mask)

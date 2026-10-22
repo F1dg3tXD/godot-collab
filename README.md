@@ -42,6 +42,11 @@ structured, validated operation protocol.
   colours, interpolation, rate limiting, and stale-state removal.
 - Live 3D `editorNodeVis` markers for each remote participant, so collaborators
   see each other moving in the editor's 3D view in real time.
+- Live **2D cursors** in the 2D editor view (`assets/cursor_2d.tscn`): the
+  remote pointer is drawn at the same canvas position, follows the scene's
+  pan/zoom, and plays the same idle/hover/grab animations. The viewport-polling
+  approach is adapted from
+  [GodotTogether](https://github.com/Wolfyxon/GodotTogether).
 - Host-authoritative scene operations: node create/remove/rename/reparent,
   `Node3D` transform, and the **general Inspector-property set** (derived from
   `get_property_list()`, not a fixed whitelist), including slash sub-properties
@@ -187,6 +192,27 @@ that, six-character short codes from the same server work with no manual setup.
 The relay only forwards bytes — it is not an application server, and it stores
 nothing on disk.
 
+### Requiring a relay password
+
+Relays reachable from the internet can be abused by strangers unless they are
+protected. Start the relay with a shared secret in
+`GODOT_COLLAB_RELAY_PASSWORD`:
+
+```
+GODOT_COLLAB_RELAY_PASSWORD='choose-a-secret' \
+  GODOT=/path/to/godot tools/relay_server/run.sh --port 45900
+```
+
+(The same environment variable works with `relayctl.sh`, and with Docker via
+`docker run -e GODOT_COLLAB_RELAY_PASSWORD=...` or the Compose file.) Every host
+and every client must then type that password into the dock's **relay password**
+field; the relay rejects registrations with a missing or wrong password before a
+room is created. The password is kept in memory only, is never written to
+`EditorSettings`, and is **not** embedded in invitation codes — share it
+separately. Without the variable the relay stays open, as before. Password
+checking uses the relay protocol v2, so relay hosts and clients must all run this
+version of the add-on.
+
 ## Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — components, data flow,
@@ -209,7 +235,7 @@ addons/godot_collab/
   core/                        constants, settings, logging, identity
   network/                     wire protocol, ENet session manager, relay protocol/server, participants
   session/                     session coordinator, invite codes, rendezvous, UPnP, connectivity
-  presence/                    local/remote cursor sampling and overlay drawing
+  presence/                    cursor sampling/state, live 3D markers, live 2D cursors
   collaboration/               per-scene sync contexts, scene ops, node-id mapping, diff watcher, save, workspace authoring + source-file sync
   project_transfer/            project manifest + chunked transfer manager
   security/                    path validation + rate limiting

@@ -51,6 +51,7 @@ var _relay_mode: bool = false
 var _relay_host_role: bool = false
 var _relay_room: String = ""
 var _relay_token: String = ""
+var _relay_password: String = ""
 var _relay_max_peers: int = 0
 ## Human-readable project name sent with a host REGISTER so the relay can create
 ## a per-project live mirror directory (`live_<name>`).
@@ -144,17 +145,17 @@ func join(address: String, port: int, timeout_seconds: int = 10) -> Error:
 ## Hosts a session through a dedicated relay server. Both this process and its
 ## clients make outbound connections to [param address]:[param port]; the relay
 ## forwards traffic, so no inbound port needs to be reachable.
-func host_via_relay(address: String, port: int, room: String, token: String, max_peers: int, timeout_seconds: int = 10) -> Error:
-	return _begin_relay(address, port, room, token, max_peers, true, timeout_seconds)
+func host_via_relay(address: String, port: int, room: String, token: String, max_peers: int, timeout_seconds: int = 10, password: String = "") -> Error:
+	return _begin_relay(address, port, room, token, max_peers, true, timeout_seconds, password)
 
 
 ## Joins a relay-hosted session. Reaches the host through the relay, so it works
 ## behind NAT/CGNAT without port forwarding.
-func join_via_relay(address: String, port: int, room: String, token: String, timeout_seconds: int = 10) -> Error:
-	return _begin_relay(address, port, room, token, 0, false, timeout_seconds)
+func join_via_relay(address: String, port: int, room: String, token: String, timeout_seconds: int = 10, password: String = "") -> Error:
+	return _begin_relay(address, port, room, token, 0, false, timeout_seconds, password)
 
 
-func _begin_relay(address: String, port: int, room: String, token: String, max_peers: int, as_host: bool, timeout_seconds: int) -> Error:
+func _begin_relay(address: String, port: int, room: String, token: String, max_peers: int, as_host: bool, timeout_seconds: int, password: String = "") -> Error:
 	if address.strip_edges().is_empty() or port <= 0:
 		return ERR_INVALID_PARAMETER
 	if room.strip_edges().is_empty():
@@ -172,6 +173,7 @@ func _begin_relay(address: String, port: int, room: String, token: String, max_p
 	_relay_host_role = as_host
 	_relay_room = room
 	_relay_token = token
+	_relay_password = password
 	_relay_max_peers = max_peers
 	_relay_registered = false
 	_relay_app_id = 0
@@ -444,7 +446,7 @@ func _relay_send_register() -> void:
 		return
 	var role: int = CollabRelayProtocol.Role.HOST if _relay_host_role else CollabRelayProtocol.Role.CLIENT
 	# Registration must bypass the outbox: it is what unlocks sending.
-	_relay_put_now(CollabRelayProtocol.encode_register(_relay_room, role, _relay_token, _relay_max_peers, relay_project_name))
+	_relay_put_now(CollabRelayProtocol.encode_register(_relay_room, role, _relay_token, _relay_max_peers, relay_project_name, _relay_password))
 
 
 func _peer_ids() -> Array[int]:
@@ -510,6 +512,7 @@ func _teardown_peer() -> void:
 	_relay_host_role = false
 	_relay_room = ""
 	_relay_token = ""
+	_relay_password = ""
 	_relay_max_peers = 0
 	_relay_registered = false
 	_relay_app_id = 0

@@ -397,6 +397,7 @@ func _init() -> void:
 	_test_loopback_session()
 	_test_relay_session()
 	_test_relay_token_rejection()
+	_test_relay_password()
 	_test_scene_sync_loopback()
 	_test_general_property_sync()
 	_test_workspace_rename_delete_loopback()
@@ -715,6 +716,10 @@ func _test_relay_protocol() -> void:
 	_check(int(decoded.get("role", -1)) == CollabRelayProtocol.Role.HOST, "register role")
 	_check(str(decoded.get("token", "")) == "tok", "register token")
 	_check(int(decoded.get("max_peers", 0)) == 8, "register max peers")
+	_check(str(decoded.get("password", "missing")) == "", "register password defaults to empty")
+	var secured_register: Dictionary = CollabRelayProtocol.decode(
+		CollabRelayProtocol.encode_register("AB12CD", CollabRelayProtocol.Role.CLIENT, "tok", 8, "proj", "relay-secret"))
+	_check(str(secured_register.get("password", "")) == "relay-secret", "register carries the relay password")
 
 	var registered: Dictionary = CollabRelayProtocol.decode(CollabRelayProtocol.encode_registered(2, CollabRelayProtocol.HOST_APP_ID))
 	_check(int(registered.get("kind", 0)) == CollabRelayProtocol.Kind.REGISTERED, "registered kind")
@@ -883,6 +888,31 @@ func _test_marker_manager() -> void:
 func _test_cursor_2d_manager() -> void:
 	print("[cursor 2d manager]")
 	var logs := CollabLog.new()
+	var mapping_viewport := SubViewport.new()
+	root.add_child(mapping_viewport)
+	mapping_viewport.set_global_canvas_transform(Transform2D(Vector2(2.0, 0.0), Vector2(0.0, 2.0), Vector2(100.0, 50.0)))
+	_check(
+		CollabCursor2DManager.viewport_to_canvas(mapping_viewport, Vector2(200.0, 100.0)).is_equal_approx(Vector2(50.0, 25.0)),
+		"2D container-to-canvas mapping uses the editor pan/zoom"
+	)
+	_check(
+		CollabCursor2DManager.viewport_to_canvas(null, Vector2(3.0, 4.0)) == Vector2(3.0, 4.0),
+		"2D viewport-to-canvas mapping tolerates a missing viewport"
+	)
+	mapping_viewport.free()
+
+	var container := SubViewportContainer.new()
+	container.stretch = true
+	container.stretch_shrink = 2
+	root.add_child(container)
+	var shrunk := SubViewport.new()
+	container.add_child(shrunk)
+	_check(
+		CollabCursor2DManager.viewport_to_canvas(shrunk, Vector2(200.0, 100.0)).is_equal_approx(Vector2(100.0, 50.0)),
+		"2D container-to-canvas mapping accounts for stretch shrink"
+	)
+	container.free()
+
 	var viewport := SubViewport.new()
 	root.add_child(viewport)
 
@@ -1197,6 +1227,98 @@ func _test_relay_token_rejection() -> void:
 	bad.free()
 	host_manager.free()
 	bad_manager.free()
+	relay.stop()
+	relay.free()
+
+
+## A relay started with a password must reject registrations that present a
+## wrong password (or none) before creating/joining a room, and accept matching
+## ones for both the host and a client.
+func _test_relay_password() -> void:
+	print("[relay password]")
+	var logs := CollabLog.new()
+	var relay_port: int = 45992
+	var relay := CollabRelayServer.new(logs)
+	_check(relay.start(relay_port, 8, "*", "", "relay-secret") == OK, "password relay starts")
+	_check(relay.is_password_protected(), "relay reports password protection")
+
+	var bad_host_manager := CollabSessionManager.new(logs)
+	var bad_host := CollabSessionCoordinator.new()
+	bad_host.setup(bad_host_manager, logs)
+	var bad_host_state: Dictionary = {"failed": false, "message": ""}
+	bad_host_manager.connection_failed.connect(func(reason: String) -> void:
+		bad_host_state["failed"] = true
+		bad_host_state["message"] = reason)
+	bad_host.start_host_via_relay("127.0.0.1", relay_port, "PWROOM", "tok", 4, CollabConstants.WorkspaceMode.HOST_WORKSPACE, false, "", "wrong-password")
+	var deadline: int = Time.get_ticks_msec() + 4000
+	while Time.get_ticks_msec() < deadline and not bool(bad_host_state["failed"]):
+		relay.poll()
+		bad_host.poll()
+		OS.delay_msec(5)
+	_check(bool(bad_host_state["failed"]), "host with a wrong relay password is rejected")
+	_check(str(bad_host_state["message"]).to_lower().contains("password"), "password rejection explains the problem")
+	_check(relay.room_count() == 0, "rejected host did not create a room")
+
+	var host_manager := CollabSessionManager.new(logs)
+	var host := CollabSessionCoordinator.new()
+	host.setup(host_manager, logs)
+	_check(
+		host.start_host_via_relay("127.0.0.1", relay_port, "PWROOM", "tok", 4, CollabConstants.WorkspaceMode.HOST_WORKSPACE, false, "", "relay-secret") == OK,
+		"host with the correct relay password starts"
+	)
+	var host_deadline: int = Time.get_ticks_msec() + 4000
+	while Time.get_ticks_msec() < host_deadline and host.session_manager.get_state() != CollabConstants.ConnectionState.HOSTING:
+		relay.poll()
+		host.poll()
+		OS.delay_msec(5)
+	_check(host.session_manager.get_state() == CollabConstants.ConnectionState.HOSTING, "relay accepted the password-protected host")
+	_check(relay.room_count() == 1, "password-protected host created a room")
+
+	var bad_client_manager := CollabSessionManager.new(logs)
+	var bad_client := CollabSessionCoordinator.new()
+	bad_client.setup(bad_client_manager, logs)
+	var bad_client_state: Dictionary = {"failed": false}
+	bad_client_manager.connection_failed.connect(func(_reason: String) -> void: bad_client_state["failed"] = true)
+	bad_client.join_via_relay("127.0.0.1", relay_port, "PWROOM", "tok", CollabConstants.WorkspaceMode.HOST_WORKSPACE, "")
+	deadline = Time.get_ticks_msec() + 4000
+	while Time.get_ticks_msec() < deadline and not bool(bad_client_state["failed"]):
+		relay.poll()
+		host.poll()
+		bad_client.poll()
+		OS.delay_msec(5)
+	_check(bool(bad_client_state["failed"]), "client without the relay password is rejected")
+
+	var client_manager := CollabSessionManager.new(logs)
+	var client := CollabSessionCoordinator.new()
+	client.setup(client_manager, logs)
+	var client_state: Dictionary = {"joined": false}
+	client.session_started.connect(func(_is_host: bool) -> void: client_state["joined"] = true)
+	_check(
+		client.join_via_relay("127.0.0.1", relay_port, "PWROOM", "tok", CollabConstants.WorkspaceMode.HOST_WORKSPACE, "relay-secret") == OK,
+		"client with the correct relay password starts"
+	)
+	deadline = Time.get_ticks_msec() + 6000
+	while Time.get_ticks_msec() < deadline:
+		relay.poll()
+		host.poll()
+		client.poll()
+		if bool(client_state["joined"]) and host.registry.count() >= 2:
+			break
+		OS.delay_msec(5)
+	_check(bool(client_state["joined"]), "password-protected client completed the handshake")
+
+	client.stop("cleanup")
+	host.stop("cleanup")
+	bad_client.stop("cleanup")
+	bad_host.stop("cleanup")
+	bad_client.free()
+	client.free()
+	host.free()
+	bad_host.free()
+	bad_host_manager.free()
+	client_manager.free()
+	host_manager.free()
+	bad_client_manager.free()
 	relay.stop()
 	relay.free()
 
