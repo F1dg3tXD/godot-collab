@@ -1,5 +1,9 @@
 [gd_scene format=3 uid="uid://b0g1vk6qs3gng"]
 
+[ext_resource type="SpriteFrames" uid="uid://b2n41ve8frgoh" path="res://addons/godot_collab/assets/cursor_sprites.tres" id="1_42asq"]
+
 [node name="Node2D" type="Node2D" unique_id=1374744842]
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=748876170]
+sprite_frames = ExtResource("1_42asq")
+animation = &"idle_hover"
