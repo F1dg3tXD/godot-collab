@@ -402,6 +402,7 @@ func _init() -> void:
 	_test_inline_resource_safety()
 	_test_stale_temp_repair()
 	_test_stale_temp_file_repair()
+	_test_merge_planner()
 	_test_resource_content_sync()
 	_test_deep_resource_watch()
 	_test_pending_resource_resolution()
@@ -2326,3 +2327,31 @@ func _test_rejoin_desync() -> void:
 	host_manager.free()
 	client_manager.free()
 	client2_manager.free()
+
+
+func _test_merge_planner() -> void:
+	print("[merge planner]")
+	var base := {"a.tscn": "1", "b.tscn": "2", "c.tscn": "3"}
+	var host := {"a.tscn": "1", "b.tscn": "2h", "c.tscn": "3", "d.tscn": "4"}
+	var client := {"a.tscn": "1", "b.tscn": "2", "c.tscn": "3c", "e.tscn": "5"}
+	var d := CollabMergePlanner.plan(base, host, client)
+	var by_path := {}
+	for decision in d:
+		by_path[decision["path"]] = decision["action"]
+	_check(by_path.get("a.tscn", "") == "keep", "unchanged on both sides is kept")
+	_check(by_path.get("b.tscn", "") == "take_host", "host-only change is taken from host")
+	_check(by_path.get("c.tscn", "") == "take_client", "client-only change is taken from client")
+	_check(by_path.get("d.tscn", "") == "take_host", "host-only addition is taken from host")
+	_check(by_path.get("e.tscn", "") == "take_client", "client-only addition is taken from client")
+	# conflict case
+	var host2 := {"f.tscn": "x"}
+	var client2 := {"f.tscn": "y"}
+	var d2 := CollabMergePlanner.plan({}, host2, client2)
+	_check(d2.size() == 1 and d2[0]["action"] == "conflict", "conflicting additions are conflicts")
+	# deletion conflict
+	var base3 := {"g.tscn": "1"}
+	var host3 := {}
+	var client3 := {"g.tscn": "2"}
+	var d3 := CollabMergePlanner.plan(base3, host3, client3)
+	_check(d3.size() == 1 and d3[0]["action"] == "conflict", "delete vs modify is a conflict")
+	_check(CollabMergePlanner.conflicts(d3).size() == 1, "conflicts() filters correctly")
