@@ -462,6 +462,10 @@ func _apply_create(op: Dictionary, ctx: CollabSceneContext) -> void:
 		t.origin = op.get("position", Vector3.ZERO)
 		t.basis = Basis.from_euler(op.get("rotation", Vector3.ZERO)).scaled(op.get("scale", Vector3.ONE))
 		(node as Node3D).transform = t
+	elif node is CanvasItem:
+		(node as CanvasItem).position = op.get("position", (node as CanvasItem).position)
+		(node as CanvasItem).rotation = float(op.get("rotation", (node as CanvasItem).rotation))
+		(node as CanvasItem).scale = op.get("scale", (node as CanvasItem).scale)
 	# Register before applying properties so a deferred resource reference can
 	# resolve against this node's stable id on a later poll.
 	ctx.node_ids.register(node, authoritative_id)
