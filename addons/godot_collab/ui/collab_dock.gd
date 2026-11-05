@@ -16,6 +16,7 @@ signal kick_requested(peer_id: int)
 signal save_requested()
 signal download_requested(root: String)
 signal cancel_transfer_requested()
+signal fork_sync_requested()
 signal snapshot_requested()
 signal snapshot_apply_requested()
 signal snapshot_discard_requested()
@@ -59,6 +60,7 @@ var _progress_label: Label
 var _transfer_dir_edit: LineEdit
 var _download_button: Button
 var _cancel_button: Button
+var _fork_sync_button: Button
 var _save_button: Button
 var _scene_list: ItemList
 var _open_scene_button: Button
@@ -262,6 +264,12 @@ func _build() -> void:
 	_cancel_button.pressed.connect(func() -> void: cancel_transfer_requested.emit())
 	transfer_row.add_child(_cancel_button)
 	project_box.add_child(transfer_row)
+	var fork_row := HBoxContainer.new()
+	_fork_sync_button = Button.new()
+	_fork_sync_button.text = "Fork sync"
+	_fork_sync_button.pressed.connect(func() -> void: fork_sync_requested.emit())
+	fork_row.add_child(_fork_sync_button)
+	project_box.add_child(fork_row)
 	_progress_label = Label.new()
 	_progress_label.text = ""
 	_progress_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

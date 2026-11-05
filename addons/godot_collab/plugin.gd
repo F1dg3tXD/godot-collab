@@ -269,6 +269,7 @@ func _build_dock() -> void:
 	_dock.save_requested.connect(_on_save_requested)
 	_dock.download_requested.connect(_on_download_requested)
 	_dock.cancel_transfer_requested.connect(_on_cancel_transfer_requested)
+	_dock.fork_sync_requested.connect(_on_fork_sync_requested)
 	_dock.snapshot_requested.connect(_on_snapshot_requested)
 	_dock.snapshot_apply_requested.connect(_on_snapshot_apply_requested)
 	_dock.snapshot_discard_requested.connect(_on_snapshot_discard_requested)
@@ -971,6 +972,13 @@ func _on_fork_sync_status(text: String) -> void:
 
 func _on_fork_sync_conflict(path: String, reason: String) -> void:
 	_dock.push_message("Fork sync conflict: %s (%s)" % [path, reason], true)
+
+
+func _on_fork_sync_requested() -> void:
+	if _fork_sync == null:
+		return
+	_fork_sync.request_sync()
+	_dock.push_message("Fork sync requested.", false)
 
 
 func _on_workspace_result(_request_id: int, ok: bool, path: String, message: String) -> void:
