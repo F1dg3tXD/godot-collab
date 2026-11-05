@@ -65,6 +65,8 @@ enum MessageType {
 	# --- fork sync (three-way merge) ---
 	FORK_SYNC_MANIFEST = 77, ## peer -> host: local file manifest for merge planning
 	FORK_SYNC_RESULT = 78, ## host -> peers: merge decisions + conflicts
+	FORK_SYNC_FILE_REQUEST = 79, ## host -> client: send this file's content
+	FORK_SYNC_FILE_CONTENT = 80, ## client -> host: file content for a requested path
 }
 
 ## Named reasons a peer can be rejected or an operation refused.
@@ -297,6 +299,16 @@ static func _validate_payload(type: MessageType, payload: Dictionary) -> String:
 		MessageType.FORK_SYNC_RESULT:
 			if not payload.has("decisions") or typeof(payload["decisions"]) != TYPE_ARRAY:
 				return "FORK_SYNC_RESULT missing decisions"
+		MessageType.FORK_SYNC_FILE_REQUEST:
+			if not _has_keys(payload, ["path"]):
+				return "FORK_SYNC_FILE_REQUEST missing fields"
+			if not _check_str(payload, "path", 512):
+				return "FORK_SYNC_FILE_REQUEST bad path"
+		MessageType.FORK_SYNC_FILE_CONTENT:
+			if not _has_keys(payload, ["path", "data"]):
+				return "FORK_SYNC_FILE_CONTENT missing fields"
+			if not _check_str(payload, "path", 512):
+				return "FORK_SYNC_FILE_CONTENT bad path"
 		MessageType.PROJECT_SETTINGS:
 			if not payload.has("settings") or typeof(payload["settings"]) != TYPE_DICTIONARY:
 				return "PROJECT_SETTINGS missing settings"

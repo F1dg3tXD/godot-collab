@@ -63,6 +63,8 @@ const WORKSPACE_MESSAGE_TYPES: Array[int] = [
 const FORK_SYNC_MESSAGE_TYPES: Array[int] = [
 	CollabProtocol.MessageType.FORK_SYNC_MANIFEST,
 	CollabProtocol.MessageType.FORK_SYNC_RESULT,
+	CollabProtocol.MessageType.FORK_SYNC_FILE_REQUEST,
+	CollabProtocol.MessageType.FORK_SYNC_FILE_CONTENT,
 ]
 
 var session_manager: CollabSessionManager
