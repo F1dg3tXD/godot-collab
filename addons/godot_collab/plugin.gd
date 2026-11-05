@@ -22,6 +22,7 @@ var _cursor_2d: CollabCursor2DManager
 var _scene_sync: CollabSceneSyncService
 var _save_service: CollabSaveService
 var _workspace: CollabWorkspaceService
+var _fork_sync: CollabForkSyncService
 var _transfer: CollabTransferManager
 var _rendezvous: CollabRendezvousClient
 var _upnp: CollabUpnpForwarder
@@ -137,6 +138,11 @@ func _enter_tree() -> void:
 	_workspace.request_result.connect(_on_workspace_result)
 	_workspace.scene_list_received.connect(_on_scene_list)
 
+	_fork_sync = CollabForkSyncService.new()
+	_fork_sync.setup(_coordinator, Callable(self, "_project_root"))
+	_fork_sync.status_changed.connect(_on_fork_sync_status)
+	_fork_sync.conflict_found.connect(_on_fork_sync_conflict)
+
 	_transfer = CollabTransferManager.new()
 	_transfer.setup(_coordinator, _settings, _logs, Callable(self, "_project_root"))
 	add_child(_transfer)
@@ -185,6 +191,8 @@ func _repair_stale_temp_resource_refs() -> void:
 func _exit_tree() -> void:
 	if _transfer != null:
 		_transfer.cancel()
+	if _fork_sync != null:
+		_fork_sync.teardown()
 	if _coordinator != null:
 		_coordinator.stop("plugin disabled")
 	if _upnp != null:
@@ -955,6 +963,14 @@ func _on_refresh_scenes_requested() -> void:
 
 func _on_workspace_status(text: String) -> void:
 	_dock.push_message(text, false)
+
+
+func _on_fork_sync_status(text: String) -> void:
+	_dock.push_message(text, false)
+
+
+func _on_fork_sync_conflict(path: String, reason: String) -> void:
+	_dock.push_message("Fork sync conflict: %s (%s)" % [path, reason], true)
 
 
 func _on_workspace_result(_request_id: int, ok: bool, path: String, message: String) -> void:
