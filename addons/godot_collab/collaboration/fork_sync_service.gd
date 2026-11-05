@@ -92,6 +92,10 @@ func _on_message(from_peer: int, type: int, payload: Dictionary) -> void:
 		_handle_incoming_manifest(from_peer, payload)
 	elif type == CollabProtocol.MessageType.FORK_SYNC_RESULT:
 		_handle_result(payload)
+	elif type == CollabProtocol.MessageType.FORK_SYNC_FILE_REQUEST:
+		_handle_file_request(from_peer, payload)
+	elif type == CollabProtocol.MessageType.FORK_SYNC_FILE_CONTENT:
+		_handle_file_content(payload)
 
 
 func _handle_incoming_manifest(from_peer: int, payload: Dictionary) -> void:
@@ -110,7 +114,21 @@ func _handle_incoming_manifest(from_peer: int, payload: Dictionary) -> void:
 	var out_files: Array = []
 	for d in decisions:
 		out_files.append(d)
-	coordinator.session_manager.broadcast(CollabProtocol.MessageType.FORK_SYNC_RESULT, {"decisions": out_files}, true)
+		var action: String = str(d.get("action", ""))
+		var path: String = str(d.get("path", ""))
+		if action == "take_host":
+			var bytes: PackedByteArray = _read_file(path)
+			var ext: String = "." + path.get_extension().to_lower()
+			coordinator.send_workspace_to(from_peer, CollabProtocol.MessageType.FILE_APPLY, {
+				"path": path,
+				"data": bytes,
+				"scene": ext == ".tscn" or ext == ".escn",
+			})
+		elif action == "delete":
+			coordinator.send_workspace_to(from_peer, CollabProtocol.MessageType.FILE_REMOVE, {"path": path})
+		elif action == "take_client":
+			coordinator.send_workspace_to(from_peer, CollabProtocol.MessageType.FORK_SYNC_FILE_REQUEST, {"path": path})
+	coordinator.session_manager.send_to(from_peer, CollabProtocol.MessageType.FORK_SYNC_RESULT, {"decisions": out_files}, true)
 
 
 func _handle_result(payload: Dictionary) -> void:
@@ -120,3 +138,46 @@ func _handle_result(payload: Dictionary) -> void:
 			conflicts.append(d)
 			conflict_found.emit(str(d.get("path", "")), str(d.get("reason", "")))
 	status_changed.emit("Fork sync: %d conflict(s)." % conflicts.size())
+
+
+func _handle_file_request(from_peer: int, payload: Dictionary) -> void:
+	var path: String = str(payload.get("path", ""))
+	var bytes: PackedByteArray = _read_file(path)
+	coordinator.session_manager.send_to(1, CollabProtocol.MessageType.FORK_SYNC_FILE_CONTENT, {
+		"path": path,
+		"data": bytes,
+	}, true)
+
+
+func _handle_file_content(payload: Dictionary) -> void:
+	if coordinator == null or not coordinator.is_host():
+		return
+	var path: String = str(payload.get("path", ""))
+	var data: Variant = payload.get("data", PackedByteArray())
+	if typeof(data) != TYPE_PACKED_BYTE_ARRAY:
+		return
+	_write_file(path, data)
+
+
+func _read_file(rel: String) -> PackedByteArray:
+	var root: String = _root_path()
+	if root.is_empty():
+		return PackedByteArray()
+	return FileAccess.get_file_as_bytes(root.path_join(rel))
+
+
+func _write_file(rel: String, data: PackedByteArray) -> void:
+	var root: String = _root_path()
+	if root.is_empty():
+		return
+	var abs: String = root.path_join(rel)
+	var parent: String = abs.get_base_dir()
+	if not DirAccess.dir_exists_absolute(parent):
+		DirAccess.make_dir_recursive_absolute(parent)
+	var file: FileAccess = FileAccess.open(abs, FileAccess.WRITE)
+	if file == null:
+		status_changed.emit("Fork sync: cannot write '%s'." % rel)
+		return
+	file.store_buffer(data)
+	file.close()
+	status_changed.emit("Fork sync: wrote '%s'." % rel)
