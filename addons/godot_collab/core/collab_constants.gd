@@ -154,6 +154,7 @@ enum WorkspaceOp {
 enum WorkspaceMode {
 	HOST_WORKSPACE = 0, ## Host owns the authoritative scene + project snapshot.
 	GIT_PRESENCE = 1, ## Presence/cursors only; git distributes files.
+	FORK_SYNC = 2, ## Three-way merge between divergent project checkouts.
 }
 
 ## Connection lifecycle as seen by the dock.

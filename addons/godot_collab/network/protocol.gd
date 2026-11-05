@@ -62,6 +62,9 @@ enum MessageType {
 	FILE_REMOVE = 74, ## host -> peers: delete this project file locally (rename/delete)
 	FILE_SYNC_MANIFEST = 75, ## host -> joining peer: manifest of tracked files for catch-up
 	PROJECT_SETTINGS = 76, ## host -> peers: project configuration as editor state
+	# --- fork sync (three-way merge) ---
+	FORK_SYNC_MANIFEST = 77, ## peer -> host: local file manifest for merge planning
+	FORK_SYNC_RESULT = 78, ## host -> peers: merge decisions + conflicts
 }
 
 ## Named reasons a peer can be rejected or an operation refused.
@@ -277,6 +280,23 @@ static func _validate_payload(type: MessageType, payload: Dictionary) -> String:
 				var s: Variant = fe["sha256"]
 				if typeof(s) != TYPE_STRING or (s as String).length() > 64:
 					return "FILE_SYNC_MANIFEST bad sha256"
+		MessageType.FORK_SYNC_MANIFEST:
+			if not payload.has("files") or typeof(payload["files"]) != TYPE_ARRAY:
+				return "FORK_SYNC_MANIFEST missing files"
+			var fm: Array = payload["files"]
+			if fm.size() > CollabConstants.MAX_SCENE_LIST:
+				return "FORK_SYNC_MANIFEST too large"
+			for f in fm:
+				if typeof(f) != TYPE_DICTIONARY:
+					return "FORK_SYNC_MANIFEST bad entry"
+				var fe: Dictionary = f
+				if not _check_str(fe, "path", 512):
+					return "FORK_SYNC_MANIFEST bad path"
+				if not fe.has("sha256"):
+					return "FORK_SYNC_MANIFEST missing sha256"
+		MessageType.FORK_SYNC_RESULT:
+			if not payload.has("decisions") or typeof(payload["decisions"]) != TYPE_ARRAY:
+				return "FORK_SYNC_RESULT missing decisions"
 		MessageType.PROJECT_SETTINGS:
 			if not payload.has("settings") or typeof(payload["settings"]) != TYPE_DICTIONARY:
 				return "PROJECT_SETTINGS missing settings"

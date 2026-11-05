@@ -22,6 +22,7 @@ signal scene_message(peer_id: int, type: int, payload: Dictionary)
 signal save_message(peer_id: int, type: int, payload: Dictionary)
 signal transfer_message(peer_id: int, type: int, payload: Dictionary)
 signal workspace_message(peer_id: int, type: int, payload: Dictionary)
+signal fork_sync_message(peer_id: int, type: int, payload: Dictionary)
 signal scene_focus_changed(peer_id: int, scene_id: String)
 signal compatibility_warning(text: String)
 signal notice(text: String)
@@ -57,6 +58,11 @@ const WORKSPACE_MESSAGE_TYPES: Array[int] = [
 	CollabProtocol.MessageType.FILE_REMOVE,
 	CollabProtocol.MessageType.FILE_SYNC_MANIFEST,
 	CollabProtocol.MessageType.PROJECT_SETTINGS,
+]
+
+const FORK_SYNC_MESSAGE_TYPES: Array[int] = [
+	CollabProtocol.MessageType.FORK_SYNC_MANIFEST,
+	CollabProtocol.MessageType.FORK_SYNC_RESULT,
 ]
 
 var session_manager: CollabSessionManager
@@ -333,6 +339,8 @@ func _on_message(from_peer: int, type: CollabProtocol.MessageType, payload: Dict
 		transfer_message.emit(from_peer, t, payload)
 	elif WORKSPACE_MESSAGE_TYPES.has(t):
 		workspace_message.emit(from_peer, t, payload)
+	elif FORK_SYNC_MESSAGE_TYPES.has(t):
+		fork_sync_message.emit(from_peer, t, payload)
 
 
 func _on_hello(peer_id: int, payload: Dictionary) -> void:
